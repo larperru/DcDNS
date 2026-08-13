@@ -1,3 +1,24 @@
+<h1 align="center">DcDNS</h1>
+
+<p align="center">
+  <a href="https://github.com/larperru/DcDNS/stargazers">
+    <img alt="GitHub stars" src="https://img.shields.io/github/stars/larperru/DcDNS?style=for-the-badge&logo=github&logoSize=auto">
+  </a>
+  <a href="https://github.com/larperru/DcDNS/releases">
+    <img alt="GitHub downloads" src="https://img.shields.io/github/downloads/larperru/DcDNS/total?style=for-the-badge&logo=github&logoSize=auto&label=DOWNLOADS">
+  </a>
+  <a href="https://github.com/larperru/DcDNS/releases/latest">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/larperru/DcDNS?style=for-the-badge&logo=github&logoSize=auto&label=VERSION">
+  </a>
+  <a href="https://github.com/larperru/DcDNS/blob/main/LICENSE">
+    <img alt="License" src="https://img.shields.io/github/license/larperru/DcDNS?style=for-the-badge&logoSize=auto">
+  </a>
+  <img alt="Platform" src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoSize=auto">
+</p>
+
+<p align="center">
+  <b>Privacy tool that enforces DNS-over-HTTPS, blocks WebRTC leaks and disables spellcheck in Discord's Electron client.</b>
+</p>
 
 # DcDNS
 
@@ -75,18 +96,3 @@ If DcDNS helped you improve your privacy while using Discord, please consider le
 ---
 
 <img width="758" height="512" alt="image" src="https://github.com/user-attachments/assets/b843c23a-b7c6-4e52-a07f-1ba950afd30f" />
-
-<p align="center">
-  <a href="https://github.com/larperru/DcDNS/stargazers">
-    <img alt="GitHub stars" src="https://img.shields.io/github/stars/larperru/DcDNS?style=flat&logo=github">
-  </a>
-  <a href="https://github.com/larperru/DcDNS/releases">
-    <img alt="GitHub all releases" src="https://img.shields.io/github/downloads/larperru/DcDNS/total?style=flat&logo=github&label=downloads">
-  </a>
-  <a href="https://github.com/larperru/DcDNS/releases/latest">
-    <img alt="Latest release" src="https://img.shields.io/github/v/release/larperru/DcDNS?style=flat&logo=github&label=version">
-  </a>
-  <a href="https://github.com/larperru/DcDNS/blob/main/LICENSE">
-    <img alt="License" src="https://img.shields.io/github/license/larperru/DcDNS?style=flat">
-  </a>
-</p>
