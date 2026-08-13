@@ -1,6 +1,6 @@
 # DcDNS
 
-A lightweight desktop tool that enhances privacy in Discord's Electron client by injecting a JavaScript payload into its main process before Discord loads.
+DcDNS is a small Windows tool that patches Discord to block tracking and leaks before the app even connects.
 
 ## What it does
 
@@ -59,7 +59,7 @@ Get the latest build from the [Releases](../../releases) page.
 
 ## License
 
-This project is closed source. The binary is provided as-is for personal use under CC BY-NC-ND 4.0.
+This project is Now OPEN source. The binary is provided as-is for personal use under CC BY-NC-ND 4.0.
 Reverse engineering, redistribution, or modification of the binary is not permitted.
 
 Copyright (c) 2025-2026 [Larper.ru]
