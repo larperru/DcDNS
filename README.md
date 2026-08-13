@@ -59,10 +59,13 @@ Get the latest build from the [Releases](../../releases) page.
 
 ## License
 
-This project is Now OPEN source. The binary is provided as-is for personal use under CC BY-NC-ND 4.0.
-Reverse engineering, redistribution, or modification of the binary is not permitted.
+This project is now **open source**. The software and its source code are provided for personal, non-commercial use. 
+
+You are free to read, inspect, and share the original software, but **modification, reverse engineering, creating derivative works, or commercial use are not permitted**.
 
 Copyright (c) 2025-2026 [Larper.ru]
+
+See the [LICENSE](LICENSE) file for full license details.
 
 ---
 
