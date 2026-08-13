@@ -2,7 +2,10 @@ Once you've installed DcDNS,
 open Discord and press the keyboard shortcut: Shift+Ctrl+I.
 This will open DevTools; go to the Console tab.
 Paste the command below. If you can't paste the command, type “allow pasting.”
+!! You should get the result: Mullvad: True
+But if you get “False,” try reinstalling DcDNS, and if that doesn't work, report it on GitHub under the “Issues” tab !!
 Then paste this command: 
+
 
 (async function() {
     console.clear();
