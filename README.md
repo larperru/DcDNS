@@ -1,3 +1,4 @@
+
 # DcDNS
 
 DcDNS is a small Windows tool that patches Discord to block tracking and leaks before the app even connects.
@@ -67,6 +68,25 @@ Copyright (c) 2025-2026 [Larper.ru]
 
 See the [LICENSE](LICENSE) file for full license details.
 
+## Support
+
+If DcDNS helped you improve your privacy while using Discord, please consider leaving a star on GitHub. It helps others discover the project and motivates continued development.
+
 ---
 
 <img width="758" height="512" alt="image" src="https://github.com/user-attachments/assets/b843c23a-b7c6-4e52-a07f-1ba950afd30f" />
+
+<p align="center">
+  <a href="https://github.com/larperru/DcDNS/stargazers">
+    <img alt="GitHub stars" src="https://img.shields.io/github/stars/larperru/DcDNS?style=flat&logo=github">
+  </a>
+  <a href="https://github.com/larperru/DcDNS/releases">
+    <img alt="GitHub all releases" src="https://img.shields.io/github/downloads/larperru/DcDNS/total?style=flat&logo=github&label=downloads">
+  </a>
+  <a href="https://github.com/larperru/DcDNS/releases/latest">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/larperru/DcDNS?style=flat&logo=github&label=version">
+  </a>
+  <a href="https://github.com/larperru/DcDNS/blob/main/LICENSE">
+    <img alt="License" src="https://img.shields.io/github/license/larperru/DcDNS?style=flat">
+  </a>
+</p>
