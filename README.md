@@ -48,7 +48,7 @@ Get the latest build from the [Releases](../../releases) page.
 This project is closed source. The binary is provided as-is for personal use under CC BY-NC-ND 4.0.
 Reverse engineering, redistribution, or modification of the binary is not permitted.
 
-Copyright (c) 2025 [Your Name]
+Copyright (c) 2025 [Larper.ru]
 
 ---
 
