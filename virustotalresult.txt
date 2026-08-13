@@ -1,0 +1,3 @@
+[v1.0.0](https://www.virustotal.com/gui/file/f961df6642811881aa07a297a8e1f6e666c05a1cee2eb80d0e1209c7eab7f8ba)
+[v1.0.1](https://www.virustotal.com/gui/file/b28c4994a2507ef8eebf5894e5983642dffbb3e6d56fcee91bba7b6f485ba3f7)
+[v1.0.2](https://www.virustotal.com/gui/file/b0884a56bbe762611ce7fa8e1e58b3f36fd06561501d04ca8063ee86ea17d08c)
