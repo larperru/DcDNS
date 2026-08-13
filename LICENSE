@@ -1,17 +1,12 @@
-Creative Commons Legal Code
+# License
 
-CC BY-NC-ND 4.0 - Attribution-NonCommercial-NoDerivatives 4.0 International
+**Copyright (c) 2026 Larper.ru**
 
-Copyright (c) 2026 [Larper.ru]
+Permission is hereby granted to any person obtaining a copy of this software and associated documentation files (the "Software"), to use, read, and share the Software for personal, non-commercial purposes, subject to the following conditions:
 
-You are free to:
-  Share — copy and redistribute the material in any medium or format.
+1. **Attribution:** You must provide credit to the original author and include a link to this repository.
+2. **Non-Commercial:** You may not use the Software or any part of its source code for commercial purposes.
+3. **No Modifications / No Derivatives:** You may **not** modify, reverse engineer, alter, or build upon the Software or its source code, nor distribute any modified versions.
+4. **Source Code Reading:** Viewing and analyzing the source code for educational or auditing purposes is allowed, provided no modified versions are distributed.
 
-Under the following terms:
-  Attribution — You must give appropriate credit and a link to this repository.
-  NonCommercial — You may not use the material for commercial purposes.
-  NoDerivatives — You may not distribute modified versions of this software.
-
-No warranties are given. The software is provided as-is.
-
-Full license text: https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
