@@ -1,3 +1,14 @@
+# ==============================================================================
+# DcDNS
+# ==============================================================================
+# Author:      Larper.ru
+# Version:     v1.0.2
+# License:     Custom Non-Commercial / No-Derivatives (Open Source - Read Only)
+# Repository:  https://github.com/larperru/DcDNS
+# Discord:     https://discord.gg/RNqC6eEQMR
+# Copyright:   (c) 2025-2026 Larper.ru. All rights reserved.
+# ==============================================================================
+
 import os
 import sys
 import re
