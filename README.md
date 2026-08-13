@@ -10,9 +10,6 @@
   <a href="https://github.com/larperru/DcDNS/releases/latest">
     <img alt="Latest release" src="https://img.shields.io/github/v/release/larperru/DcDNS?style=for-the-badge&logo=github&logoSize=auto&label=VERSION">
   </a>
-  <a href="https://github.com/larperru/DcDNS/blob/main/LICENSE">
-    <img alt="License" src="https://img.shields.io/github/license/larperru/DcDNS?style=for-the-badge&logoSize=auto">
-  </a>
   <img alt="Platform" src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoSize=auto">
 </p>
 
