@@ -14,82 +14,165 @@
 </p>
 
 <p align="center">
-  <b>Privacy tool that enforces DNS-over-HTTPS, blocks WebRTC leaks and disables spellcheck in Discord's Electron client.</b>
+  <b>A lightweight privacy hardening tool for Discord Desktop on Windows.</b><br>
+  Enforces strict DNS-over-HTTPS, blocks WebRTC IP leaks, disables telemetry, and strips tracking headers — all before Discord connects to the internet.
 </p>
 
-# DcDNS
+---
 
-DcDNS is a small Windows tool that patches Discord to block tracking and leaks before the app even connects.
+## Why DcDNS Exists
 
-## What it does
+Discord's desktop client runs on Electron, which inherits Chromium's default networking behavior. Out of the box, this means:
 
-DcDNS modifies Discord's internal `index.js` file to apply comprehensive privacy rules at the application level before network modules initialize.
+- DNS queries travel unencrypted to your ISP or default resolver
+- WebRTC can expose your real local IP address during voice and video calls
+- Chromium sends telemetry, crash reports, and fingerprinting headers
+- Spellcheck may transmit typed text to remote cloud APIs
+- Google-specific identifiers like `X-Client-Data` are attached to requests
 
-**DNS-over-HTTPS via Mullvad (Strict DoH)**
-All DNS queries made by Discord are strictly routed through Mullvad's encrypted DoH resolver (`https://dns.mullvad.net/dns-query`). Unencrypted plain DNS and fallback resolvers (such as Cloudflare or Quad9) are completely removed—DNS queries fail hard instead of silently downgrading to another provider. Chromium-level `DnsOverHttps` feature flags are injected before the app `ready` event, and host resolver cache is flushed on startup.
+DcDNS patches Discord's core `index.js` file to eliminate these leaks at the application level, before any network connection is established. No VPN required. No proxy setup. One click, immediate protection.
 
-**Privacy & Fingerprinting Protection**
-- **User-Agent Cleaning:** Electron and Discord-specific strings (`Electron/x.x.x`, `DiscordApp/x.x.x`) are stripped from the User-Agent header to prevent web servers from fingerprinting your exact version.
-- **TLS Hardening:** Minimum TLS version is enforced at 1.2 via `setSSLConfig`, blocking outdated and insecure TLS protocols.
-- **`X-Client-Data` Removal:** Google's Chromium identification header is stripped from every outgoing request.
-- **Geolocation Blocked:** All geolocation permission requests are explicitly denied at the Electron layer.
-- **Spellcheck Disabled:** Chromium's built-in spellchecker (which can send typed text to remote cloud APIs) is disabled for Discord's session.
-- **Leak Prevention:** Prevention of HTTPS/SVCB record queries leaking over insecure channels (`enableAdditionalDnsQueryTypes: false`).
+---
 
-**WebRTC IP Leak Prevention**
-WebRTC is forced to block non-proxied UDP connections (`disable_non_proxied_udp`). Local LAN IP addresses are never exposed to Discord's voice servers or other users in calls. Hardware WebRTC decoding is disabled, and strict IP permission checks are enforced.
+## What DcDNS Does
 
-**Anti-Telemetry and Tracker Blocking**
-Disables built-in crash reporting and metrics collection (`--disable-breakpad`, `--disable-metrics`, `--disable-metrics-repo`).
+### Strict DNS-over-HTTPS via Mullvad
 
-**Auto-Update Engine**
-Integrated GitHub API client checks for application updates automatically upon startup and notifies you of new releases.
+All DNS queries from Discord are forced through Mullvad's encrypted DoH resolver (`https://dns.mullvad.net/dns-query`). Plain DNS fallback is completely removed. If the DoH resolver is unreachable, queries fail securely rather than silently downgrading to an unencrypted alternative.
 
-## Supported clients
+- Chromium `DnsOverHttps` feature flags are injected before the `app-ready` event
+- Host resolver cache is flushed on startup
+- Optional: configure your own custom DoH URL in Settings
 
-- Discord
+### WebRTC IP Leak Protection
+
+WebRTC is configured to block non-proxied UDP connections (`disable_non_proxied_udp`). Your local LAN IP address is never exposed to Discord's voice servers or other users in calls. Hardware WebRTC decoding is disabled and strict IP permission checks are enforced.
+
+### Telemetry and Tracker Blocking
+
+Outgoing requests to known Discord analytics endpoints are blocked at the Electron network layer:
+
+- `/api/v*/science`
+- `/api/v*/track`
+- `/api/v*/metrics`
+- `/api/v*/events/stats`
+- `/api/v*/analytics`
+- Sentry domains (`sentry.io`, `*.sentry.io`, `ingest.sentry.io`)
+- Discord crash reporting (`crash.discord.com`, `crash-reports.discord.com`, `reporter.discord.com`)
+
+This is toggleable in Settings.
+
+### Privacy Hardening
+
+- **User-Agent Cleaning:** Electron and Discord-specific version strings are stripped from outgoing requests
+- **TLS 1.2 Minimum:** Outdated TLS protocols are blocked via `setSSLConfig`
+- **`X-Client-Data` Removal:** Google's Chromium identification header is stripped from every request
+- **Geolocation Blocked:** All geolocation permission requests are denied at the Electron layer
+- **Spellcheck Disabled:** Chromium's built-in spellchecker (which may send text to remote APIs) is disabled for Discord's session
+- **Background Networking Disabled:** Chromium's background networking and metrics collection are turned off
+
+### Transparent Operation
+
+- Full installation log showing every change made
+- SHA-256 hash of patched file displayed after install
+- Automatic backup of original `index.js` as `index.js.dcdns.bak`
+- One-click uninstall restores the original file completely
+
+---
+
+## Demo
+
+See DcDNS in action:
+
+- **YouTube Showcase (English):** https://youtu.be/Lw19Vt_cEbs
+- **YouTube Showcase (Polish):** https://youtu.be/bacK4ibB_Vo
+
+---
+
+## Supported Clients
+
+- Discord (Stable)
 - Discord PTB
 - Discord Canary
 - Discord Development
 
-## Supported platforms
+---
 
-- Windows (Windows 11 or later)
+## System Requirements
 
-## How it works
-
-Before making any changes, DcDNS automatically closes active Discord processes to prevent file lock conflicts. It creates a backup of the original `index.js` file as `index.js.dcdns.bak`. If you uninstall, the original file is fully restored and the backup is removed. If no backup exists, DcDNS safely strips the payload manually without corrupting the file.
-
-Detection is automatic. DcDNS scans all standard Discord installation paths across Windows, showing the current injection status for each client found.
-
-## Download
-
-Get the latest build from the [Releases](../../releases) page.
-
-## Requirements
-
-- **Windows:** Windows 11 or later with WebView2 runtime (included with Windows 11, or download from [microsoft.com/edge/webview2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/))
-- Discord, Discord PTB, Discord Canary, or Discord Development installed
-
-## Notes
-
-- On Windows, run `DcDNS.exe` as Administrator if you encounter permission errors during injection.
-- After updating Discord, run Install again — Discord updates overwrite the patched `index.js`.
-
-## License
-
-This project is now **open source**. The software and its source code are provided for personal, non-commercial use. 
-
-You are free to read, inspect, and share the original software, but **modification, reverse engineering, creating derivative works, or commercial use are not permitted**.
-
-Copyright (c) 2025-2026 [Larper.ru]
-
-See the [LICENSE](LICENSE) file for full license details.
-
-## Support
-
-If DcDNS helped you improve your privacy while using Discord, please consider leaving a star on GitHub. It helps others discover the project and motivates continued development.
+- Windows 11 or later
+- WebView2 runtime (included with Windows 11, or download from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/))
+- One of the supported Discord clients installed
 
 ---
 
-<img width="758" height="512" alt="image" src="https://github.com/user-attachments/assets/b843c23a-b7c6-4e52-a07f-1ba950afd30f" />
+## Download
+
+Get the latest release from the [Releases](../../releases) page.
+
+No installation required. DcDNS is a portable executable. Run as Administrator for proper file access to Discord's installation directory.
+
+---
+
+## How to Use
+
+1. **Close Discord** completely (DcDNS can do this automatically)
+2. **Run DcDNS.exe** as Administrator
+3. **Review the Policy** — full transparency, no data collection
+4. **Configure Settings** if desired (custom DNS, telemetry blocking, label toggle)
+5. **Click Install** and select your Discord client
+6. **Restart Discord** — the title bar will show "Encrypted By DcDNS" when active
+
+After Discord updates, run Install again. Discord updates overwrite the patched file.
+
+---
+
+## Uninstall
+
+Click Uninstall in DcDNS. The original `index.js` is restored from backup. If no backup exists, DcDNS safely strips its payload without corrupting the file.
+
+---
+
+## Why Trust DcDNS
+
+- **Fully open source:** Every line of code is visible in this repository
+- **No network calls:** The tool itself does not transmit any data. The only external connection is a read-only check to GitHub's public API for update notifications
+- **No data collection:** Zero telemetry, zero analytics, zero crash reporting from DcDNS itself
+- **Reversible:** One-click uninstall returns Discord to stock
+- **Community tested:** Active feedback and issue tracking on GitHub
+
+---
+
+## Limitations
+
+DcDNS improves network-level privacy within Discord. It does not:
+
+- Make you anonymous to Discord (you are still logged into your account)
+- Bypass Discord's servers or encryption
+- Protect traffic outside of Discord (use a system-wide VPN or DNS for that)
+- Persist through Discord client updates (reinstall required after each update)
+
+---
+
+## Support and Community
+
+- **GitHub Issues:** Bug reports and feature requests
+- **Discord Server:** https://discord.gg/9cu4Rf2ke2 — support, feedback, and development discussion
+
+If DcDNS helped you, please consider starring the repository. It helps others discover the project and supports continued development.
+
+---
+
+## License
+
+Copyright (c) 2025-2026 Larper.ru
+
+Permission is granted to use, read, and share this software for personal, non-commercial purposes. Modification, reverse engineering, derivative works, and commercial use are not permitted.
+
+See the [LICENSE](LICENSE) file for complete terms.
+
+---
+
+<p align="center">
+  <img width="758" height="512" alt="DcDNS Interface" src="https://github.com/user-attachments/assets/b843c23a-b7c6-4e52-a07f-1ba950afd30f" />
+</p>
