@@ -1,5 +1,8 @@
+-- VIRUSTOTAL
 [v1.0.0](https://www.virustotal.com/gui/file/f961df6642811881aa07a297a8e1f6e666c05a1cee2eb80d0e1209c7eab7f8ba)
 [v1.0.1](https://www.virustotal.com/gui/file/b28c4994a2507ef8eebf5894e5983642dffbb3e6d56fcee91bba7b6f485ba3f7)
 [v1.0.2](https://www.virustotal.com/gui/file/b0884a56bbe762611ce7fa8e1e58b3f36fd06561501d04ca8063ee86ea17d08c)
 [v1.0.3](https://www.virustotal.com/gui/file/29fd9db599fa2c5b304466fec2aa9aa2d594ccf8d379a79a9f9a536bb18942bb)
 [v1.0.4](https://www.virustotal.com/gui/file/29fd9db599fa2c5b304466fec2aa9aa2d594ccf8d379a79a9f9a536bb18942bb)
+
+-- SANDBOX HYBRID ANALYSIS - SOON
