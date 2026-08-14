@@ -84,8 +84,8 @@ This is toggleable in Settings.
 
 See DcDNS in action:
 
-- **YouTube Showcase (English):** https://youtu.be/Lw19Vt_cEbs
-- **YouTube Showcase (Polish):** https://youtu.be/bacK4ibB_Vo
+- **YouTube Showcase :** https://youtu.be/Lw19Vt_cEbs
+- **YouTube Showcase :** https://youtu.be/bacK4ibB_Vo
 
 ---
 
