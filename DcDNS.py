@@ -2,13 +2,12 @@
 # DcDNS
 # ==============================================================================
 # Author:      Larper.ru
-# Version:     v1.0.4
+# Version:     v1.0.5
 # License:     Custom Non-Commercial / No-Derivatives (Open Source - Read Only)
 # Repository:  https://github.com/larperru/DcDNS
 # Discord:     https://discord.gg/RNqC6eEQMR
 # Copyright:   (c) 2025-2026 Larper.ru. All rights reserved.
 # ==============================================================================
-
 
 import os
 import sys
@@ -39,8 +38,9 @@ except Exception:
     pass
 
 DISCORD_INVITE_URL = "https://discord.gg/9cu4Rf2ke2"
+WEBSITE_URL = "https://dcdns.pages.dev/"
 GITHUB_REPO_SLUG = "larperru/DcDNS"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 
 PAYLOAD_MARKER = "/* === [DcDNS Policy Framework"
 HEADER_TAG = "/* === [DcDNS Policy Framework v" + APP_VERSION + "] === */"
@@ -71,11 +71,7 @@ DISCORD_TELEMETRY_PATTERNS = [
     r"click\.discord\.com",
 ]
 
-# ---------------------------------------------------------------------------
-# PAYLOAD  (injected into Discord's index.js)
-# ---------------------------------------------------------------------------
-DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] === */
-(function() {
+_DCDNS_PAYLOAD_BODY = r"""(function() {
     'use strict';
     try {
         var electron;
@@ -85,23 +81,30 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
         var shell   = (electron && electron.shell)    || (electron && electron.default && electron.default.shell);
         if (!app) return;
 
-        /* ── Read persisted config from main-process storage ── */
+        
         function readConf() {
             try {
-                /* Electron main process has no localStorage – read from a temp file */
                 var fs = require('fs');
                 var path = require('path');
+                var execDir = path.dirname(process.execPath || '');
+                var portableFile = path.join(execDir, 'dcdns_portable.json');
+                if (fs.existsSync(portableFile)) {
+                    try {
+                        var raw = fs.readFileSync(portableFile, 'utf8');
+                        return JSON.parse(raw);
+                    } catch(e) {}
+                }
                 var cfgFile = path.join(app.getPath('userData'), 'dcdns_conf.json');
                 if (fs.existsSync(cfgFile)) {
-                    var raw = fs.readFileSync(cfgFile, 'utf8');
-                    return JSON.parse(raw);
+                    var raw2 = fs.readFileSync(cfgFile, 'utf8');
+                    return JSON.parse(raw2);
                 }
             } catch(e) {}
             return {};
         }
         var __conf = readConf();
 
-        /* ── Feature flags (overridable via config) ── */
+        
         var DCDNS_LABEL_ENABLED       = __conf.showLabel       !== false;
         var BLOCK_TELEMETRY_ENABLED   = __conf.blockTelemetry  !== false;
         var BLOCK_WEBRTC_LEAK         = __conf.blockWebrtc     !== false;
@@ -110,13 +113,13 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
         var HARDEN_TLS                = __conf.hardenTls        !== false;
         var CLEAN_USERAGENT           = __conf.cleanUserAgent   !== false;
         var BLOCK_CRASH_REPORTS       = __conf.blockCrashReports !== false;
-        var DISABLE_UPDATE_CHECK      = __conf.disableUpdateCheck === true;
+        var DISABLE_UPDATE_CHECK      = false;
         var CUSTOM_DNS_PRIMARY        = (__conf.customDnsPrimary   && __conf.customDnsPrimary.trim())   || 'https://dns.mullvad.net/dns-query';
         var CUSTOM_DNS_FALLBACK       = (__conf.customDnsFallback  && __conf.customDnsFallback.trim())  || 'https://adblock.dns.mullvad.net/dns-query';
         var CUSTOM_USERAGENT          = (__conf.customUserAgent && __conf.customUserAgent.trim()) || '';
         var LABEL_POSITION            = __conf.labelPosition || 'bottom-right';
 
-        /* ── Telemetry URL patterns ── */
+        
         var TELEMETRY_PATTERNS = [
             /\/api\/v\d+\/science/,
             /\/api\/v\d+\/track/,
@@ -150,11 +153,15 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
             return /crash|sentry|breakpad/i.test(url);
         }
 
-        /* ── Chromium switches ── */
+        
         function safeSwitch(name, value) {
             try {
                 if (app.commandLine && typeof app.commandLine.appendSwitch === 'function') {
-                    app.commandLine.appendSwitch(name, value !== undefined ? String(value) : undefined);
+                    if (value !== undefined) {
+                        app.commandLine.appendSwitch(name, String(value));
+                    } else {
+                        app.commandLine.appendSwitch(name);
+                    }
                 }
             } catch (e) {}
         }
@@ -179,13 +186,13 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
             safeSwitch('disable-domain-reliability', '1');
             safeSwitch('disable-features',
                 'ReportingObserver,NetworkTimeServiceQuerying,SafeBrowsingExtendedReporting,HyperlinkAuditing,AutofillServerCommunication');
-            /* DoH via Chromium flag */
+            
             var dohTemplate = encodeURIComponent(CUSTOM_DNS_PRIMARY) + ' ' + encodeURIComponent(CUSTOM_DNS_FALLBACK);
             safeSwitch('enable-features',
                 'DnsOverHttps:Fallback/false/Templates/' + dohTemplate);
         }
 
-        /* ── DNS policy (Electron API) ── */
+        
         function applyDnsPolicy() {
             try {
                 if (typeof app.configureHostResolver === 'function') {
@@ -198,11 +205,11 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
             } catch (e) {}
         }
 
-        /* ── Per-session policy ── */
+        
         function applySessionPolicy(sess) {
             if (!sess) return;
 
-            /* Spellcheck */
+            
             if (DISABLE_SPELLCHECK) {
                 try {
                     if (typeof sess.setSpellCheckerEnabled === 'function') {
@@ -211,7 +218,7 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
                 } catch (e) {}
             }
 
-            /* Permission handler – block geolocation (and optionally others) */
+            
             try {
                 if (typeof sess.setPermissionRequestHandler === 'function') {
                     sess.setPermissionRequestHandler(function(webContents, permission, callback) {
@@ -220,14 +227,14 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
                                 callback(false);
                                 return;
                             }
-                            /* Allow everything else (notifications, microphone, camera, etc.) */
+                            
                             callback(true);
                         } catch (e) { try { callback(true); } catch (e2) {} }
                     });
                 }
             } catch (e) {}
 
-            /* Permission check handler (for already-granted permissions) */
+            
             try {
                 if (typeof sess.setPermissionCheckHandler === 'function') {
                     sess.setPermissionCheckHandler(function(webContents, permission, requestingOrigin) {
@@ -237,7 +244,7 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
                 }
             } catch (e) {}
 
-            /* Strip tracking / fingerprinting request headers */
+            
             try {
                 if (sess.webRequest && typeof sess.webRequest.onBeforeSendHeaders === 'function') {
                     sess.webRequest.onBeforeSendHeaders(function(details, callback) {
@@ -252,7 +259,7 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
                 }
             } catch (e) {}
 
-            /* Block telemetry + crash requests */
+            
             try {
                 if (sess.webRequest && typeof sess.webRequest.onBeforeRequest === 'function') {
                     sess.webRequest.onBeforeRequest(function(details, callback) {
@@ -267,7 +274,7 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
                 }
             } catch (e) {}
 
-            /* User-Agent sanitisation */
+            
             try {
                 if (CLEAN_USERAGENT && typeof sess.getUserAgent === 'function' && typeof sess.setUserAgent === 'function') {
                     if (CUSTOM_USERAGENT) {
@@ -285,14 +292,14 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
                 }
             } catch (e) {}
 
-            /* Clear stale DNS cache */
+            
             try {
                 if (typeof sess.clearHostResolverCache === 'function') {
                     sess.clearHostResolverCache();
                 }
             } catch (e) {}
 
-            /* TLS hardening */
+            
             if (HARDEN_TLS) {
                 try {
                     if (typeof sess.setSSLConfig === 'function') {
@@ -302,7 +309,7 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
             }
         }
 
-        /* ── Version helpers ── */
+        
         function getElectronVersion() {
             try { return (process && process.versions && process.versions.electron) || ''; }
             catch (e) { return ''; }
@@ -312,7 +319,7 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
             catch (e) { return ''; }
         }
 
-        /* ── Update checker ── */
+        
         var DCDNS_CURRENT_VERSION = '""" + APP_VERSION + r"""';
         var DCDNS_REPO_SLUG       = '""" + GITHUB_REPO_SLUG + r"""';
         var dcdnsUpdateInfo       = null;
@@ -442,22 +449,22 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
 '        _currentLabel=label;\n' +
 '      }catch(e){}\n' +
 '    }\n' +
-'    /* Re-inject if removed */\n' +
+'    \n' +
 '    var _obs=new MutationObserver(function(){\n' +
 '      if(!_currentLabel||!isInDOM(_currentLabel)){setTimeout(inject,30);}\n' +
 '    });\n' +
 '    if(document.documentElement){\n' +
 '      _obs.observe(document.documentElement,{childList:true,subtree:true});\n' +
 '    }\n' +
-'    /* Fullscreen change — re-inject */\n' +
+'    \n' +
 '    document.addEventListener("fullscreenchange",function(){setTimeout(inject,60);},true);\n' +
 '    document.addEventListener("webkitfullscreenchange",function(){setTimeout(inject,60);},true);\n' +
-'    /* Periodic safety net */\n' +
+'    \n' +
 '    setInterval(function(){try{inject();}catch(e){}},2000);\n' +
 '    if(document.readyState==="complete"||document.readyState==="interactive"){inject();}\n' +
 '    else{document.addEventListener("DOMContentLoaded",inject);}\n' +
 '  }catch(e){}\n' +
-'  /* Update banner */\n' +
+'  \n' +
 '  window.__dcdnsShowUpdateBanner=function(info){\n' +
 '    try{\n' +
 '      if(!info||!info.version)return;\n' +
@@ -494,7 +501,7 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
                         } catch (e) {}
                     }
                 });
-                /* Prevent opening telemetry-adjacent URLs in new windows */
+                
                 try {
                     if (typeof contents.setWindowOpenHandler === 'function') {
                         contents.setWindowOpenHandler(function(details) {
@@ -536,137 +543,210 @@ DCDNS_PAYLOAD = r"""/* === [DcDNS Policy Framework v""" + APP_VERSION + r"""] ==
         }
     } catch (err) {}
 })();
-/* === [End DcDNS Policy Framework] === */
-
 """
+
+DCDNS_PAYLOAD = HEADER_TAG + "\n" + _DCDNS_PAYLOAD_BODY + FOOTER_TAG + "\n"
 
 POLICY_TEXT = """\
 DcDNS Policy Framework v{version}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 WHAT DcDNS IS
-  DcDNS is an open-source privacy tool that patches Discord's
-  Electron main process (index.js) and injects a small script
-  that runs before Discord's own code starts.
 
-  The script only modifies low-level Electron and Chromium
-  networking/privacy settings. It does not read, log, store,
-  modify, or transmit anything you type, say, or send inside
-  Discord. It does not touch your Discord account, session
-  token, messages, or files.
+  DcDNS is a free, open-source privacy tool for Discord's Windows
+  desktop client. It works by prepending a small JavaScript payload
+  to Discord's Electron main-process entry point (index.js). This
+  payload executes before Discord's own code and applies a set of
+  hardened network and privacy policies at the Electron / Chromium
+  engine level.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PRIVACY PROTECTIONS
+  DcDNS operates entirely on your local machine. It does not
+  communicate with any DcDNS server. It does not have a backend.
+  No data about you, your machine, or your Discord usage is ever
+  sent anywhere by DcDNS itself.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRIVACY PROTECTIONS (ACTIVE BY DEFAULT)
 
   RULE 1 — Encrypted DNS (DNS-over-HTTPS)
-    All DNS lookups made by the Discord client are routed
-    through a user-configurable DoH resolver (default: Mullvad).
+    Every DNS lookup made by the Discord client is forced through a
+    DNS-over-HTTPS (DoH) resolver, bypassing your ISP's plaintext
+    resolver entirely.
+
       Default Primary:  https://dns.mullvad.net/dns-query
       Default Fallback: https://adblock.dns.mullvad.net/dns-query
-    Mullvad publishes a strict no-logs policy and filters known
-    ad, tracker, and malware domains. Fallback to plaintext DNS
-    is disabled — lookups cannot silently downgrade.
-    You can set your own DoH server in Settings.
+
+    Mullvad operates a strict zero-logs policy, blocks known ad,
+    tracker, and malware domains, and does not share data with third
+    parties. Fallback to plaintext DNS is disabled at the Chromium
+    engine level — lookups cannot silently downgrade even if the DoH
+    server is unreachable. You may set any RFC 8484-compliant DoH
+    server in Settings.
 
   RULE 2 — WebRTC IP Leak Prevention (toggleable)
-    WebRTC is locked to "public interface only" mode.
-    Your local/LAN IP address is never exposed to voice/video
-    servers or call participants. Voice and video calls continue
-    to work normally.
+    WebRTC is locked to "default_public_interface_only" mode via
+    both Chromium command-line switches and the webrtc-ip-handling-
+    policy flag. Your local network (LAN/VPN) IP address is never
+    exposed to voice servers, video servers, or call participants.
+    Voice and video calls continue to function normally.
 
   RULE 3 — Geolocation Blocked (toggleable)
-    Any geolocation request from Discord is automatically denied
-    at the Electron permission layer before Discord can ask.
-    This also applies to already-granted-permission checks.
+    All geolocation permission requests originating from Discord are
+    automatically denied at the Electron permission-request-handler
+    layer, before Discord can present a prompt. Already-granted
+    permission checks are also intercepted and denied.
 
   RULE 4 — Spellcheck Disabled (toggleable)
-    Chromium's built-in spellchecker can send typed words to a
-    remote Google API endpoint. DcDNS disables this for Discord's
-    session so nothing you type is sent for spellcheck purposes.
+    Chromium's built-in spellchecker transmits typed words to a
+    remote Google API for correction. DcDNS disables the spellchecker
+    on Discord's session so keystrokes are never sent to Google's
+    spellcheck endpoint.
 
   RULE 5 — Discord Telemetry Blocked (toggleable)
-    Requests to Discord's analytics, event-tracking, and science
-    endpoints (/api/*/science, /api/*/track, /api/*/metrics,
-    /api/*/analytics, reporter.discord.com, click.discord.com)
-    are cancelled at the network layer before they reach servers.
-    Also blocks third-party analytics (Mixpanel, Segment, Amplitude).
+    Network requests to Discord's analytics, event-tracking, science,
+    and metrics endpoints are cancelled at the webRequest layer before
+    they leave the machine. Blocked endpoints include:
+      /api/*/science, /api/*/track, /api/*/metrics,
+      /api/*/analytics, /api/*/events/stats,
+      reporter.discord.com, click.discord.com
+    Third-party analytics integrations are also blocked:
+      Mixpanel, Segment, Amplitude.
 
   RULE 6 — Crash Report Blocking (toggleable)
-    Sentry crash reporting and Discord crash upload endpoints are
-    blocked, and the Chromium crash reporter (Breakpad) is disabled.
+    Sentry crash-report ingestion endpoints and Discord crash-upload
+    servers are blocked at the network layer. The Chromium crash
+    reporter (Breakpad) is disabled via the --disable-breakpad and
+    --no-crash-upload command-line flags.
 
-  RULE 7 — Chromium Telemetry Disabled
-    Chromium background networking, component updater pings, domain
-    reliability reporting, sync, HyperlinkAuditing, and AutofillServer
-    communication are all disabled. The X-Client-Data and
-    X-Goog-Visitor-Id headers are stripped from every request.
+  RULE 7 — Chromium Telemetry Hardening (always active)
+    Regardless of other toggle states, DcDNS always applies the
+    following Chromium-level privacy flags:
+      --disable-background-networking
+      --disable-client-side-phishing-detection
+      --disable-component-update
+      --disable-default-apps
+      --disable-sync
+      --metrics-recording-only
+      --no-pings
+      --disable-domain-reliability
+    Additionally, ReportingObserver, NetworkTimeServiceQuerying,
+    SafeBrowsingExtendedReporting, HyperlinkAuditing, and
+    AutofillServerCommunication are disabled via feature flags.
+    The X-Client-Data, X-Goog-Visitor-Id, and X-Firebase-Client
+    headers are stripped from all outbound requests.
 
   RULE 8 — TLS Hardening (toggleable)
-    Minimum TLS version is enforced at 1.2, preventing connections
-    to servers using older, insecure TLS versions.
+    The minimum acceptable TLS version is enforced at 1.2 via the
+    Electron session SSL configuration. Connections to servers
+    presenting TLS 1.0 or 1.1 are rejected outright.
 
   RULE 9 — User-Agent Cleaning (toggleable)
-    Electron and Discord-specific strings are removed from the
-    User-Agent header so the Chromium engine version isn't leaked.
-    You can also set a fully custom User-Agent string in Settings.
+    Electron version strings and Discord-specific tokens
+    (Electron/x.x.x, DiscordApp/x.x.x, discord/x.x.x) are removed
+    from the User-Agent header sent with every request. This prevents
+    fingerprinting based on the exact Electron/Chromium build in use.
+    A fully custom User-Agent string can also be set in Settings.
 
   RULE 10 — Title Bar Label (toggleable, position configurable)
-    An "Encrypted by DcDNS" label is injected into Discord's
-    renderer. It uses a fixed position so it persists through
-    fullscreen, screen-sharing, layout changes, and Discord
-    window events. The Chrome/Electron version is NOT shown.
+    An "Encrypted by DcDNS" badge is injected into Discord's
+    renderer process using a fixed-position overlay. The badge
+    survives fullscreen transitions, screen-sharing sessions, layout
+    changes, and Discord's own DOM mutations (a MutationObserver
+    re-injects it if removed). The Electron/Chrome version number
+    is intentionally omitted from the label.
 
-  RULE 11 — Update Notice (toggleable)
-    DcDNS periodically checks GitHub's public release API to see
-    if a newer DcDNS version exists. Only a version lookup is sent;
-    nothing about you or your Discord account is uploaded.
+  RULE 11 — Update Notifications (always active)
+    DcDNS periodically queries the GitHub Releases API to check
+    whether a newer version is available. The only data transmitted
+    is the request to api.github.com/repos/{repo}/releases/latest
+    plus a User-Agent header identifying the current DcDNS version.
+    Nothing about you, your Discord account, or your machine is
+    included. When a newer version is found, a dismissable in-Discord
+    banner appears linking to the release page.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BACKUP & RESTORE
-  Before writing anything, DcDNS copies the untouched file to
-  index.js.dcdns.bak next to the original. On reinstall you will
-  be asked whether to overwrite the existing backup or keep it.
-  Uninstalling restores that exact backup and deletes it.
-  If the backup is missing, DcDNS falls back to manually stripping
-  its own payload from index.js.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Before modifying index.js, DcDNS copies the original, untouched
+  file to index.js.dcdns.bak in the same directory. If a backup
+  already exists from a previous install, you will be prompted to
+  either keep the original backup (safer — preserves the pre-DcDNS
+  stock file) or overwrite it with the current file.
+
+  Uninstalling DcDNS restores the backup exactly as it was and then
+  deletes the backup file. If no backup is found, DcDNS falls back
+  to stripping its own payload from index.js by locating the known
+  header and footer markers.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WHAT DcDNS DOES NOT DO
-  • Does not collect, store, or transmit any personal data.
-  • Does not read or modify your messages, calls, or files.
-  • Does not touch your Discord account, token, or settings.
-  • Does not survive a Discord auto-update (expected behaviour).
-  • Does not install persistent background services or daemons.
-  • Does not require admin rights for settings changes (only for
-    writing to Discord's program directory).
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  DcDNS explicitly does not:
+  • Read, log, store, or transmit anything you type in Discord.
+  • Read, modify, or access your messages, calls, or shared files.
+  • Access, read, or store your Discord account credentials or token.
+  • Persist across a Discord auto-update (index.js is overwritten by
+    Discord's updater — this is expected, not a malfunction).
+  • Install background services, startup entries, or daemons.
+  • Require administrator rights for configuration changes (only file
+    writes to Discord's program directory require elevation).
+  • Modify the Discord web app or any mobile Discord client.
+  • Communicate with any DcDNS-operated server or service.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RISKS & LIMITATIONS
-  • Discord's Terms of Service do not officially support third-party
-    client modifications. Use is at your own discretion and risk.
-  • Any Discord update overwrites index.js and removes DcDNS;
-    this is expected behaviour, not a malfunction.
-  • Some Discord-specific features (e.g. crash reporting that helps
-    Discord improve the client) will be disabled.
-  • DcDNS is provided "as is" with no warranty of any kind.
-    See the MIT licence for full terms.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Discord's Terms of Service do not permit third-party modifications
+    to the client. Use DcDNS at your own discretion and risk. DcDNS
+    makes no representation that its use is permitted by Discord.
+
+  • Every Discord auto-update overwrites index.js, removing the DcDNS
+    payload. You must reinstall DcDNS after each Discord update.
+
+  • Disabling crash reports and telemetry means Discord's engineering
+    team will not receive crash data from your client, which may delay
+    detection of client-side bugs affecting you.
+
+  • DcDNS is provided "as is" with no warranty of any kind, express or
+    implied. See the MIT Licence for full terms and conditions.
+
+  • DcDNS does not guarantee anonymity or complete privacy. It reduces
+    the attack surface and limits passive data collection. It does not
+    replace a VPN, does not encrypt your Discord traffic end-to-end,
+    and does not prevent Discord's servers from logging your activity.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SCOPE
-  Only the Discord desktop Electron client is affected.
-  The Discord web app and official mobile apps are never touched.
-  Supported: Discord (Stable), Discord PTB, Discord Canary on Windows.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  DcDNS only modifies the Discord Electron desktop client on Windows.
+  Supported variants: Discord (Stable), Discord PTB, Discord Canary.
+  The Discord web application and all mobile apps are never touched.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DATA COLLECTION BY DcDNS
+
+  DcDNS collects no personal data. The only outbound request made by
+  DcDNS itself is a periodic version check to the GitHub API:
+    GET https://api.github.com/repos/{repo}/releases/latest
+  This request carries only the DcDNS version number in the
+  User-Agent field. No account, device, or usage data is sent.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OPEN SOURCE & LICENCE
-  DcDNS is free and open-source software released under the MIT Licence.
-  Source: https://github.com/{repo}
-  Contributions and audits are welcome.
-  Provided "as is", with no warranty of any kind.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-By clicking "I Agree & Continue" you confirm that you have
-read and understood this policy and accept full responsibility
-for any changes made to your local Discord client.
+
+  DcDNS is free and open-source software released under the MIT
+  Licence. The full source code is available for review and audit at:
+    https://github.com/{repo}
+
+  Community contributions, security reports, and independent audits
+  are welcome. Provided "as is", with no warranty of any kind.
+
+  Official website: https://dcdns.pages.dev/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+By clicking "I Agree & Continue" you confirm that you have read
+and understood this policy in full and accept complete responsibility
+for any modifications made to your local Discord client installation.
 """.format(version=APP_VERSION, repo=GITHUB_REPO_SLUG)
 
 
@@ -859,8 +939,10 @@ select:disabled{opacity:.35;cursor:not-allowed}
 .log-line.warn{color:#f59e0b}
 .log-line.head{color:#a855f7;font-weight:700}
 .foot{display:flex;justify-content:space-between;padding-top:8px;gap:8px;flex-shrink:0}
-.discord-invite-btn{display:inline-flex;align-items:center;gap:5px;background:rgba(88,101,242,.12);border:1px solid rgba(88,101,242,.35);border-radius:8px;color:#7983f5;font-family:inherit;font-size:10px;font-weight:600;padding:4px 10px;cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease;flex-shrink:0;white-space:nowrap}
-.discord-invite-btn:hover{background:rgba(88,101,242,.22);border-color:rgba(88,101,242,.6);color:#9fa8fa}
+.discord-invite-btn{display:inline-flex;align-items:center;gap:5px;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.28);border-radius:8px;color:#c4b5fd;font-family:inherit;font-size:10px;font-weight:600;padding:4px 10px;cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease;flex-shrink:0;white-space:nowrap}
+.discord-invite-btn:hover{background:rgba(168,85,247,.2);border-color:rgba(168,85,247,.55);color:#ddd6fe}
+.discord-invite-btn.discord-btn{background:rgba(88,101,242,.12);border-color:rgba(88,101,242,.35);color:#7983f5}
+.discord-invite-btn.discord-btn:hover{background:rgba(88,101,242,.22);border-color:rgba(88,101,242,.6);color:#9fa8fa}
 .discord-invite-btn svg{flex-shrink:0}
 .foot .btn{width:auto;flex:1}
 .discord-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:12px}
@@ -928,6 +1010,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
     <div class="logo-wrap">""" + LOGO_HTML + """</div>
     <span class="title">DcDNS</span>
     <span class="version">v""" + APP_VERSION + """</span>
+    <span id="portable-badge" style="display:none;font-size:9px;font-weight:700;background:rgba(34,197,94,.12);color:#22c55e;border:1px solid rgba(34,197,94,.3);border-radius:5px;padding:2px 7px;margin-left:2px;letter-spacing:.04em">PORTABLE</span>
     <div class="header-right">
       <button class="icon-btn" id="btn-open-settings" title="Settings">""" + SETTINGS_SVG + """</button>
     </div>
@@ -945,10 +1028,16 @@ select:disabled{opacity:.35;cursor:not-allowed}
     <div class="checkbox-row">
       <input type="checkbox" id="agree-check">
       <label for="agree-check">I agree to the DcDNS Policy</label>
-      <button class="discord-invite-btn" id="btn-discord-invite" title="Join our Discord server">
-        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.26a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>
-        Join Our Discord
-      </button>
+      <div style="display:flex;gap:6px;margin-left:auto">
+        <button class="discord-invite-btn" id="btn-website" title="Official DcDNS website">
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Website
+        </button>
+        <button class="discord-invite-btn discord-btn" id="btn-discord-invite" title="Join our Discord server">
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.26a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>
+          Discord
+        </button>
+      </div>
     </div>
     <button class="btn primary" id="btn-next" disabled>Continue &rarr;</button>
   </div>
@@ -1010,7 +1099,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
     <div class="card">
       <div class="card-inner" style="padding:14px 18px">
 
-        <div class="settings-group-title">&#x1F4E1; Label</div>
+        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6"/><path d="M9 12h6"/><path d="M9 15h4"/></svg>Label</div>
 
         <div class="settings-row">
           <div>
@@ -1032,7 +1121,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
           </div>
         </div>
 
-        <div class="settings-group-title">&#x1F6E1; Privacy</div>
+        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Privacy</div>
 
         <div class="settings-row">
           <div>
@@ -1084,7 +1173,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
           <label class="toggle"><input type="checkbox" id="toggle-ua" checked><span class="toggle-slider"></span></label>
         </div>
 
-        <div class="settings-group-title">&#x1F310; DNS</div>
+        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>DNS</div>
 
         <div class="settings-row" style="flex-direction:column;align-items:flex-start">
           <div>
@@ -1109,7 +1198,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
           <input class="settings-input" id="input-dns-fallback" type="text" placeholder="https://adblock.dns.mullvad.net/dns-query" spellcheck="false">
         </div>
 
-        <div class="settings-group-title">&#x1F9BE; User-Agent</div>
+        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>User-Agent</div>
 
         <div class="settings-row" style="flex-direction:column;align-items:flex-start">
           <div>
@@ -1119,15 +1208,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
           <input class="settings-input" id="input-custom-ua" type="text" placeholder="e.g. Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ..." spellcheck="false">
         </div>
 
-        <div class="settings-group-title">&#x2699;&#xFE0F; Misc</div>
-
-        <div class="settings-row">
-          <div>
-            <div class="settings-label">Disable Update Check</div>
-            <div class="settings-desc">Don't contact GitHub to check for DcDNS updates</div>
-          </div>
-          <label class="toggle"><input type="checkbox" id="toggle-no-update"><span class="toggle-slider"></span></label>
-        </div>
+        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Misc</div>
 
       </div>
     </div>
@@ -1172,37 +1253,53 @@ var _settings = {
   disableSpellcheck: true,
   hardenTls:         true,
   cleanUserAgent:    true,
-  disableUpdateCheck: false,
   customDnsPrimary:  '',
   customDnsFallback: '',
   customUserAgent:   ''
 };
-try {
-  var _raw = localStorage.getItem('dcdns_conf');
-  if (_raw) { var _parsed = JSON.parse(_raw); if (_parsed) _settings = Object.assign(_settings, _parsed); }
-} catch(e) {}
 
 function saveSettings() {
-  try { localStorage.setItem('dcdns_conf', JSON.stringify(_settings)); } catch(e) {}
+  try {
+    waitForApi(function() {
+      try { window.pywebview.api.save_settings(JSON.stringify(_settings)); } catch(e) {}
+    }, 10);
+  } catch(e) {}
 }
 
+waitForApi(function() {
+  try {
+    window.pywebview.api.load_settings().then(function(raw) {
+      try {
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed) _settings = Object.assign(_settings, parsed);
+        }
+      } catch(e) {}
+    }).catch(function() {});
+  } catch(e) {}
+}, 30);
+
 function applySettingsToUI() {
-  function setChk(id, val) { var el = safeEl(id); if (el) el.checked = val; }
-  function setVal(id, val) { var el = safeEl(id); if (el) el.value = val || ''; }
-  setChk('toggle-label',    _settings.showLabel         !== false);
-  setChk('toggle-telemetry',_settings.blockTelemetry    !== false);
-  setChk('toggle-crash',    _settings.blockCrashReports !== false);
-  setChk('toggle-webrtc',   _settings.blockWebrtc       !== false);
-  setChk('toggle-geo',      _settings.blockGeolocation  !== false);
-  setChk('toggle-spell',    _settings.disableSpellcheck !== false);
-  setChk('toggle-tls',      _settings.hardenTls         !== false);
-  setChk('toggle-ua',       _settings.cleanUserAgent    !== false);
-  setChk('toggle-no-update',_settings.disableUpdateCheck === false);
-  setVal('input-dns-primary',  _settings.customDnsPrimary);
-  setVal('input-dns-fallback', _settings.customDnsFallback);
-  setVal('input-custom-ua',    _settings.customUserAgent);
-  var selPos = safeEl('select-label-position');
-  if (selPos) selPos.value = _settings.labelPosition || 'bottom-right';
+  try {
+    function setChk(id, v) { var el = safeEl(id); if (el) el.checked = v; }
+    function setVal(id, v) { var el = safeEl(id); if (el) el.value = v || ''; }
+    var showLabel = _settings.showLabel !== false;
+    setChk('toggle-label',    showLabel);
+    setChk('toggle-telemetry',_settings.blockTelemetry    !== false);
+    setChk('toggle-crash',    _settings.blockCrashReports !== false);
+    setChk('toggle-webrtc',   _settings.blockWebrtc       !== false);
+    setChk('toggle-geo',      _settings.blockGeolocation  !== false);
+    setChk('toggle-spell',    _settings.disableSpellcheck !== false);
+    setChk('toggle-tls',      _settings.hardenTls         !== false);
+    setChk('toggle-ua',       _settings.cleanUserAgent    !== false);
+    setVal('input-dns-primary',  _settings.customDnsPrimary);
+    setVal('input-dns-fallback', _settings.customDnsFallback);
+    setVal('input-custom-ua',    _settings.customUserAgent);
+    var selPos = safeEl('select-label-position');
+    if (selPos) selPos.value = _settings.labelPosition || 'bottom-right';
+    var posRow = safeEl('row-label-position');
+    if (posRow) posRow.style.display = showLabel ? '' : 'none';
+  } catch(e) {}
 }
 
 function safeBind(id, eventName, handler) {
@@ -1217,6 +1314,14 @@ function safeBind(id, eventName, handler) {
 }
 
 function safeEl(id) { try { return document.getElementById(id); } catch(e) { return null; } }
+
+safeBind('toggle-label', 'change', function() {
+  try {
+    var el = safeEl('toggle-label');
+    var posRow = safeEl('row-label-position');
+    if (el && posRow) posRow.style.display = el.checked ? '' : 'none';
+  } catch(e) {}
+});
 
 /* Orbs */
 try {
@@ -1269,6 +1374,21 @@ function updateSteps(active) {
 
 try { updateSteps('policy'); } catch (err) {}
 
+waitForApi(function() {
+  try {
+    window.pywebview.api.get_mode().then(function(res) {
+      try {
+        var mode = JSON.parse(res);
+        var badge = safeEl('portable-badge');
+        if (badge && mode && mode.portable) {
+          badge.style.display = '';
+          badge.title = 'Config: ' + (mode.portable_path || 'dcdns_portable.json');
+        }
+      } catch(e) {}
+    }).catch(function() {});
+  } catch(e) {}
+}, 30);
+
 window.selectedInstall = null;
 window.discordInstalls = [];
 window._backupResolve  = null;
@@ -1278,7 +1398,14 @@ safeBind('agree-check', 'change', function(e) {
   if (nextBtn) nextBtn.disabled = !e.target.checked;
 });
 safeBind('btn-discord-invite', 'click', function() {
-  try { if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.open_discord === 'function') { window.pywebview.api.open_discord(); } } catch (err) {}
+  waitForApi(function() {
+    try { window.pywebview.api.open_discord(); } catch (err) {}
+  }, 20);
+});
+safeBind('btn-website', 'click', function() {
+  waitForApi(function() {
+    try { window.pywebview.api.open_website(); } catch (err) {}
+  }, 20);
 });
 safeBind('btn-next', 'click', function() { showPage('install'); scanAll(); });
 safeBind('btn-back1', 'click', function() {
@@ -1317,7 +1444,6 @@ safeBind('btn-settings-save', 'click', function() {
   _settings.disableSpellcheck  = chk('toggle-spell');
   _settings.hardenTls          = chk('toggle-tls');
   _settings.cleanUserAgent     = chk('toggle-ua');
-  _settings.disableUpdateCheck = chk('toggle-no-update');
   _settings.customDnsPrimary   = val('input-dns-primary');
   _settings.customDnsFallback  = val('input-dns-fallback');
   _settings.customUserAgent    = val('input-custom-ua');
@@ -1360,47 +1486,76 @@ function waitForApi(callback, retries) {
   setTimeout(function() { waitForApi(callback, retries - 1); }, 200);
 }
 
-async function scanAll() {
+function _applyScanResults(data) {
+  try {
+    window.discordInstalls = Array.isArray(data) ? data : [];
+    for (var flavor in FLAVOR_MAP) {
+      try {
+        var suffix = FLAVOR_MAP[flavor];
+        var inst = null;
+        for (var j = 0; j < window.discordInstalls.length; j++) {
+          if (window.discordInstalls[j].flavor === flavor) { inst = window.discordInstalls[j]; break; }
+        }
+        var verEl   = safeEl('dc-ver-'   + suffix);
+        var badgeEl = safeEl('dc-badge-' + suffix);
+        var card    = document.querySelector('.discord-card[data-flavor="' + flavor + '"]');
+        if (!verEl || !badgeEl || !card) continue;
+        if (inst && inst.path) {
+          verEl.textContent = 'v' + (inst.version || 'unknown');
+          var badge = badgeInfo(inst);
+          badgeEl.textContent = badge.text;
+          badgeEl.className   = badge.cls;
+          card.dataset.path         = inst.path;
+          card.dataset.injected     = inst.injected ? '1' : '0';
+          card.dataset.version      = inst.version       || '';
+          card.dataset.dcdnsVersion = inst.dcdns_version || '';
+          card.dataset.upToDate     = inst.up_to_date === true ? '1' : (inst.up_to_date === false ? '0' : '');
+          card.dataset.chromeVersion= inst.chrome_version || '';
+          card.dataset.sha256       = inst.sha256 || '';
+          card.dataset.stale        = inst.stale ? '1' : '0';
+          card.dataset.ageDays      = String(inst.age_days || 0);
+        } else {
+          verEl.textContent       = 'Not installed';
+          badgeEl.textContent     = 'Not found';
+          badgeEl.className       = 'dc-badge missing';
+          card.dataset.path       = '';
+          card.dataset.injected   = '0';
+        }
+      } catch (innerErr) {}
+    }
+  } catch (e) {}
+}
+
+function scanAll() {
   try {
     var cards = document.querySelectorAll('.discord-card');
     cards.forEach(function(card, i) {
-      card.style.animation = 'none'; void card.offsetWidth;
-      card.style.animationDelay = (i * 0.05) + 's'; card.style.animation = '';
-    });
-  } catch(e) {}
-  waitForApi(async function() {
-    try {
-      var res = await window.pywebview.api.scan_discord();
-      var data = JSON.parse(res);
-      window.discordInstalls = data;
-      for (var flavor in FLAVOR_MAP) {
-        try {
-          var suffix = FLAVOR_MAP[flavor];
-          var inst = null;
-          for (var j = 0; j < data.length; j++) { if (data[j].flavor === flavor) { inst = data[j]; break; } }
-          var verEl   = safeEl('dc-ver-'   + suffix);
-          var badgeEl = safeEl('dc-badge-' + suffix);
-          var card    = document.querySelector('.discord-card[data-flavor="' + flavor + '"]');
-          if (!verEl || !badgeEl || !card) continue;
-          if (inst && inst.path) {
-            verEl.textContent = 'v' + (inst.version || 'unknown');
-            var badge = badgeInfo(inst);
-            badgeEl.textContent = badge.text; badgeEl.className = badge.cls;
-            card.dataset.path         = inst.path;
-            card.dataset.injected     = inst.injected ? '1' : '0';
-            card.dataset.version      = inst.version      || '';
-            card.dataset.dcdnsVersion = inst.dcdns_version || '';
-            card.dataset.upToDate     = inst.up_to_date === true ? '1' : (inst.up_to_date === false ? '0' : '');
-            card.dataset.chromeVersion= inst.chrome_version || '';
-            card.dataset.sha256       = inst.sha256 || '';
-          } else {
-            verEl.textContent = 'Not installed'; badgeEl.textContent = 'Not found'; badgeEl.className = 'dc-badge missing';
-            card.dataset.path = ''; card.dataset.injected = '0';
-          }
-        } catch(innerErr) {}
+      card.style.animation = 'none';
+      void card.offsetWidth;
+      card.style.animationDelay = (i * 0.05) + 's';
+      card.style.animation = '';
+      var suffix = FLAVOR_MAP[card.dataset.flavor];
+      if (suffix) {
+        var verEl   = safeEl('dc-ver-'   + suffix);
+        var badgeEl = safeEl('dc-badge-' + suffix);
+        if (verEl)   verEl.innerHTML   = '<span class="spinner"></span>Scanning';
+        if (badgeEl) { badgeEl.textContent = 'Scanning'; badgeEl.className = 'dc-badge stock'; }
       }
-    } catch (err) {}
-  });
+    });
+  } catch (e) {}
+
+  waitForApi(function() {
+    window.pywebview.api.scan_discord().then(function(res) {
+      try {
+        var data = JSON.parse(res);
+        _applyScanResults(data);
+      } catch (parseErr) {
+        _applyScanResults([]);
+      }
+    }).catch(function() {
+      _applyScanResults([]);
+    });
+  }, 40);
 }
 
 function selectFlavor(flavor) {
@@ -1416,7 +1571,7 @@ function selectFlavor(flavor) {
     var verifyBadge = safeEl('verify-badge');
     if (!card || !card.dataset.path) {
       if (statusEl) { statusEl.textContent = 'This client is not installed.'; statusEl.className = 'status err'; }
-      if (warnEl) warnEl.style.display = 'none';
+      if (warnEl)    warnEl.style.display    = 'none';
       if (verifyRow) verifyRow.style.display = 'none';
       window.selectedInstall = null;
       if (installBtn)   installBtn.disabled   = true;
@@ -1456,25 +1611,37 @@ function selectFlavor(flavor) {
         else            { verifyBadge.textContent = 'Stock file';   verifyBadge.className = 'verify-badge none'; }
       } else { verifyRow.style.display = 'none'; }
     }
-    if (warnEl) warnEl.style.display = 'flex';
+    if (warnEl) {
+      var isStale = card.dataset.stale === '1';
+      if (isStale) {
+        var ageDays = parseInt(card.dataset.ageDays || '0', 10);
+        warnEl.style.display = 'flex';
+        var warnText = warnEl.querySelector('span') || warnEl;
+        warnText.textContent = 'Your Discord client was last updated ' + ageDays + ' day' + (ageDays !== 1 ? 's' : '') + ' ago. DcDNS works best with a recent Discord version.';
+      } else {
+        warnEl.style.display = 'none';
+      }
+    }
   } catch(err) {}
 }
 
 function handleOpResult(res) {
   try {
     if (res === 'ok') return;
-    var back2 = safeEl('btn-back2'), done = safeEl('btn-done'), restart = safeEl('btn-restart');
-    if (back2)   back2.disabled   = false;
-    if (done)    done.disabled    = false;
-    if (restart) restart.disabled = !window.selectedInstall;
-    var titleEl = safeEl('log-title');
-    if (titleEl) { titleEl.textContent = 'Error'; titleEl.style.color = '#ef4444'; }
-    if (res === 'busy')  addLog('[X] Another operation is already running.');
-    else addLog('[X] Invalid request.');
-  } catch(err) {}
+    if (res === 'busy') {
+      addLog('[X] Another operation is already running. Wait and try again.');
+      finishLog(false);
+    } else if (res === 'invalid') {
+      addLog('[X] Invalid request — no valid target path was found.');
+      finishLog(false);
+    } else {
+      addLog('[X] Unexpected error: ' + String(res || 'unknown'));
+      finishLog(false);
+    }
+  } catch (err) {}
 }
 
-safeBind('btn-install', 'click', async function() {
+safeBind('btn-install', 'click', function() {
   if (!window.selectedInstall) return;
   var inst = Object.assign({}, window.selectedInstall, { settings: _settings });
   showPage('log');
@@ -1485,17 +1652,22 @@ safeBind('btn-install', 'click', async function() {
   if (back2)    back2.disabled   = true;
   if (restart)  restart.disabled = true;
   if (done)     done.disabled    = true;
-  try {
-    var res = await window.pywebview.api.install(JSON.stringify(inst));
-    if (res === 'ask_backup') {
-      var choice = await window.__dcdnsAskBackup();
-      res = await window.pywebview.api.install_confirm_backup(choice);
-    }
-    handleOpResult(res);
-  } catch (err) { handleOpResult('error'); }
+  waitForApi(function() {
+    window.pywebview.api.install(JSON.stringify(inst)).then(function(res) {
+      if (res === 'ask_backup') {
+        window.__dcdnsAskBackup().then(function(choice) {
+          window.pywebview.api.install_confirm_backup(choice).then(function(res2) {
+            handleOpResult(res2);
+          }).catch(function() { handleOpResult('error'); });
+        });
+      } else {
+        handleOpResult(res);
+      }
+    }).catch(function() { handleOpResult('error'); });
+  });
 });
 
-safeBind('btn-uninstall', 'click', async function() {
+safeBind('btn-uninstall', 'click', function() {
   if (!window.selectedInstall) return;
   showPage('log');
   var logTitle = safeEl('log-title'), logBox = safeEl('log-box');
@@ -1505,23 +1677,25 @@ safeBind('btn-uninstall', 'click', async function() {
   if (back2)    back2.disabled   = true;
   if (restart)  restart.disabled = true;
   if (done)     done.disabled    = true;
-  try {
-    var res = await window.pywebview.api.uninstall(JSON.stringify(window.selectedInstall));
-    handleOpResult(res);
-  } catch (err) { handleOpResult('error'); }
+  waitForApi(function() {
+    window.pywebview.api.uninstall(JSON.stringify(window.selectedInstall)).then(function(res) {
+      handleOpResult(res);
+    }).catch(function() { handleOpResult('error'); });
+  });
 });
 
-safeBind('btn-restart', 'click', async function() {
+safeBind('btn-restart', 'click', function() {
   if (!window.selectedInstall) return;
   var back2 = safeEl('btn-back2'), restart = safeEl('btn-restart'), done = safeEl('btn-done'), logTitle = safeEl('log-title');
   if (back2)    back2.disabled   = true;
   if (restart)  restart.disabled = true;
   if (done)     done.disabled    = true;
   if (logTitle) { logTitle.textContent = 'Restarting Discord...'; logTitle.style.color = '#e8e8ef'; }
-  try {
-    var res = await window.pywebview.api.restart_discord(JSON.stringify(window.selectedInstall));
-    handleOpResult(res);
-  } catch (err) { handleOpResult('error'); }
+  waitForApi(function() {
+    window.pywebview.api.restart_discord(JSON.stringify(window.selectedInstall)).then(function(res) {
+      handleOpResult(res);
+    }).catch(function() { handleOpResult('error'); });
+  });
 });
 
 function addLog(msg) {
@@ -1531,10 +1705,10 @@ function addLog(msg) {
     var text = String(msg || '');
     var line = document.createElement('div');
     line.className = 'log-line';
-    if (text.startsWith('[+]'))           line.classList.add('ok');
+    if (text.startsWith('[+]'))                              line.classList.add('ok');
     else if (text.startsWith('[X]') || text.startsWith('[x]')) line.classList.add('err');
-    else if (text.startsWith('[!]'))      line.classList.add('warn');
-    else if (text.indexOf('===') === 0)   line.classList.add('head');
+    else if (text.startsWith('[!]'))                           line.classList.add('warn');
+    else if (text.startsWith('='))                             line.classList.add('head');
     line.textContent = text;
     box.appendChild(line);
     box.scrollTop = box.scrollHeight;
@@ -1595,12 +1769,12 @@ class DiscordDetector:
                 mtime = os.path.getmtime(norm)
             except OSError:
                 return
-            version      = DiscordDetector._get_version(norm)
-            vkey         = DiscordDetector._version_key(version)
-            status       = DiscordDetector.get_injection_status(norm)
-            chrome_ver   = DiscordDetector._get_chrome_version(norm)
-            sha256       = DiscordDetector.hash_file(norm)
-            candidate = {
+            version    = DiscordDetector._get_version(norm)
+            vkey       = DiscordDetector._version_key(version)
+            status     = DiscordDetector.get_injection_status(norm)
+            chrome_ver = DiscordDetector._get_chrome_version(norm)
+            sha256     = DiscordDetector.hash_file(norm)
+            candidate  = {
                 "flavor": flavor, "version": version, "path": norm,
                 "injected": status["injected"], "dcdns_version": status["dcdns_version"],
                 "up_to_date": status["up_to_date"], "chrome_version": chrome_ver,
@@ -1608,7 +1782,8 @@ class DiscordDetector:
             }
             current = best.get(flavor)
             if current is None:
-                best[flavor] = candidate; return
+                best[flavor] = candidate
+                return
             if vkey != (-1,) and current["_vkey"] != (-1,):
                 if vkey > current["_vkey"]:
                     best[flavor] = candidate
@@ -1619,59 +1794,193 @@ class DiscordDetector:
             elif vkey == (-1,) and current["_vkey"] == (-1,) and mtime > current["_mtime"]:
                 best[flavor] = candidate
 
-        def scan_core(base, flavor):
+        def glob_consider(pattern, flavor):
+            try:
+                for p in glob.glob(pattern, recursive=False):
+                    consider(p, flavor)
+            except Exception:
+                pass
+
+        def glob_consider_r(pattern, flavor):
+            try:
+                for p in glob.glob(pattern, recursive=True):
+                    consider(p, flavor)
+            except Exception:
+                pass
+
+        def scan_roaming_dir(base, flavor):
             if not base or not os.path.isdir(base):
                 return
-            patterns = [
-                os.path.join(base, "app-*", "modules", "discord_desktop_core", "index.js"),
-                os.path.join(base, "app-*", "modules", "discord_desktop_core-*", "discord_desktop_core", "index.js"),
-                os.path.join(base, "*", "modules", "discord_desktop_core", "index.js"),
-                os.path.join(base, "*", "modules", "discord_desktop_core-*", "discord_desktop_core", "index.js"),
-                os.path.join(base, "app-*", "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"),
-                os.path.join(base, "*", "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"),
-                os.path.join(base, "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"),
-                os.path.join(base, "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"),
-            ]
-            for pattern in patterns:
-                try:
-                    for p in glob.glob(pattern, recursive=False):
-                        consider(p, flavor)
-                except Exception:
+            try:
+                entries = sorted(os.listdir(base), reverse=True)
+            except OSError:
+                return
+            for entry in entries:
+                entry_path = os.path.join(base, entry)
+                if not os.path.isdir(entry_path):
                     continue
+                mods_dir = os.path.join(entry_path, "modules")
+                if not os.path.isdir(mods_dir):
+                    continue
+                try:
+                    mod_entries = os.listdir(mods_dir)
+                except OSError:
+                    continue
+                for mod in mod_entries:
+                    mod_lower = mod.lower()
+                    if not mod_lower.startswith("discord_desktop_core"):
+                        continue
+                    mod_path = os.path.join(mods_dir, mod)
+                    direct = os.path.join(mod_path, "index.js")
+                    if os.path.isfile(direct):
+                        consider(direct, flavor)
+                    nested = os.path.join(mod_path, "discord_desktop_core", "index.js")
+                    if os.path.isfile(nested):
+                        consider(nested, flavor)
 
-        WIN_DIRS = [
-            ("discord",       "Discord",       "DISCORD"),
-            ("discordptb",    "DiscordPTB",    "DISCORDPTB"),
-            ("discordcanary", "DiscordCanary", "DISCORDCANARY"),
+        def scan_local_dir(base, flavor):
+            if not base or not os.path.isdir(base):
+                return
+            glob_consider(os.path.join(base, "app-*", "modules", "discord_desktop_core", "index.js"), flavor)
+            glob_consider(os.path.join(base, "app-*", "modules", "discord_desktop_core-*", "discord_desktop_core", "index.js"), flavor)
+            glob_consider(os.path.join(base, "app-*", "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"), flavor)
+            glob_consider(os.path.join(base, "*", "modules", "discord_desktop_core", "index.js"), flavor)
+            glob_consider(os.path.join(base, "*", "modules", "discord_desktop_core-*", "discord_desktop_core", "index.js"), flavor)
+            glob_consider(os.path.join(base, "*", "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"), flavor)
+            glob_consider(os.path.join(base, "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"), flavor)
+            glob_consider(os.path.join(base, "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"), flavor)
+            glob_consider_r(os.path.join(base, "**", "discord_desktop_core", "index.js"), flavor)
+
+        def reg_query(key_path, value_name=""):
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+                    val, _ = winreg.QueryValueEx(k, value_name)
+                    return val
+            except Exception:
+                return None
+
+        def get_running_discord_paths():
+            paths = []
+            ps_cmd = (
+                "Get-Process | Where-Object {$_.ProcessName -match '^Discord'} "
+                "| Select-Object -ExpandProperty Path"
+            )
+            try:
+                result = subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive",
+                     "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                )
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    if line and line.lower().endswith(".exe") and os.path.isfile(line):
+                        paths.append(line)
+            except Exception:
+                pass
+            if not paths:
+                try:
+                    result = subprocess.run(
+                        ["wmic", "process", "where",
+                         "name='Discord.exe' or name='DiscordPTB.exe' or name='DiscordCanary.exe'",
+                         "get", "ExecutablePath"],
+                        capture_output=True, text=True, timeout=8,
+                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                    )
+                    for line in result.stdout.splitlines():
+                        line = line.strip()
+                        if line and line.lower().endswith(".exe") and os.path.isfile(line):
+                            paths.append(line)
+                except Exception:
+                    pass
+            return paths
+
+        WIN_FLAVORS = [
+            ("discord",       "Discord",        "DISCORD"),
+            ("discordptb",    "DiscordPTB",     "DISCORDPTB"),
+            ("discordcanary", "DiscordCanary",  "DISCORDCANARY"),
         ]
+
         local       = os.getenv("LOCALAPPDATA", "")
         roaming     = os.getenv("APPDATA", "")
-        pf          = os.getenv("ProgramFiles",        r"C:\Program Files")
-        pf86        = os.getenv("ProgramFiles(x86)",   r"C:\Program Files (x86)")
         userprofile = os.getenv("USERPROFILE", os.path.expanduser("~"))
+        pf          = os.getenv("ProgramFiles", r"C:\Program Files")
+        pf86        = os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
 
-        raw_bases = [
-            local, roaming,
-            os.path.join(userprofile, "AppData", "Local"),
+        roaming_bases = [
+            roaming,
             os.path.join(userprofile, "AppData", "Roaming"),
         ]
-        seen_bases, bases = set(), []
-        for b in raw_bases:
-            if not b: continue
-            norm = os.path.normcase(os.path.normpath(b))
-            if norm in seen_bases: continue
-            seen_bases.add(norm); bases.append(b)
+        local_bases = [
+            local,
+            os.path.join(userprofile, "AppData", "Local"),
+        ]
 
-        for base in bases:
-            for lower, title, flavor in WIN_DIRS:
-                scan_core(os.path.join(base, lower), flavor)
-                scan_core(os.path.join(base, title), flavor)
-                scan_core(os.path.join(base, lower.capitalize()), flavor)
+        seen_dedup = set()
+        def dedup(lst):
+            out = []
+            for x in lst:
+                if not x:
+                    continue
+                n = os.path.normcase(os.path.normpath(x))
+                if n not in seen_dedup:
+                    seen_dedup.add(n)
+                    out.append(x)
+            return out
 
-        for prog in [pf, pf86]:
-            if not prog: continue
-            for lower, title, flavor in WIN_DIRS:
-                scan_core(os.path.join(prog, title), flavor)
+        for lower, title, flavor in WIN_FLAVORS:
+            for base in dedup(roaming_bases):
+                scan_roaming_dir(os.path.join(base, lower), flavor)
+                scan_roaming_dir(os.path.join(base, title), flavor)
+                scan_roaming_dir(os.path.join(base, lower.capitalize()), flavor)
+            for base in dedup(local_bases):
+                for name_variant in (lower, title, lower.capitalize()):
+                    candidate_dir = os.path.join(base, name_variant)
+                    scan_local_dir(candidate_dir, flavor)
+                    scan_roaming_dir(candidate_dir, flavor)
+                    if os.path.isdir(candidate_dir):
+                        try:
+                            for sub in os.listdir(candidate_dir):
+                                sub_path = os.path.join(candidate_dir, sub)
+                                if os.path.isdir(sub_path):
+                                    scan_local_dir(sub_path, flavor)
+                                    scan_roaming_dir(sub_path, flavor)
+                        except OSError:
+                            pass
+            for prog in [pf, pf86]:
+                if not prog:
+                    continue
+                scan_local_dir(os.path.join(prog, title), flavor)
+
+        reg_keys = {
+            "DISCORD":       r"Software\Discord",
+            "DISCORDPTB":    r"Software\DiscordPTB",
+            "DISCORDCANARY": r"Software\DiscordCanary",
+        }
+        for flavor, rk in reg_keys.items():
+            for val_name in ("", "InstallLocation", "Path", "InstallDir"):
+                reg_path = reg_query(rk, val_name)
+                if reg_path and os.path.exists(reg_path):
+                    scan_local_dir(reg_path, flavor)
+                    scan_roaming_dir(reg_path, flavor)
+                    resolved = DiscordDetector.resolve_index_js(reg_path)
+                    if resolved:
+                        consider(resolved, flavor)
+
+        for exe_path in get_running_discord_paths():
+            flavor = DiscordDetector.guess_flavor(exe_path)
+            if flavor == "MANUAL":
+                continue
+            exe_dir = os.path.dirname(exe_path)
+            scan_local_dir(exe_dir, flavor)
+            scan_roaming_dir(exe_dir, flavor)
+            resolved = DiscordDetector.resolve_index_js(exe_dir)
+            if resolved:
+                consider(resolved, flavor)
+            parent = os.path.dirname(exe_dir)
+            scan_local_dir(parent, flavor)
+            scan_roaming_dir(parent, flavor)
 
         results = []
         for flavor in FLAVORS:
@@ -1744,6 +2053,9 @@ class DiscordDetector:
                 candidate = part[4:]
                 if re.match(r"^\d+(\.\d+)+$", candidate):
                     return candidate
+        for part in parts:
+            if re.match(r"^\d+\.\d+\.\d+$", part):
+                return part
         for part in parts:
             if re.match(r"^\d+(\.\d+){1,3}$", part) and len(part) > 2:
                 return part
@@ -1918,75 +2230,107 @@ class DiscordDetector:
             return False
 
 
+DEFAULT_PAYLOAD_SETTINGS = {
+    "showLabel":         True,
+    "labelPosition":     "bottom-right",
+    "blockTelemetry":    True,
+    "blockCrashReports": True,
+    "blockWebrtc":       True,
+    "blockGeolocation":  True,
+    "disableSpellcheck": True,
+    "hardenTls":         True,
+    "cleanUserAgent":    True,
+    "customDnsPrimary":  "",
+    "customDnsFallback": "",
+    "customUserAgent":   "",
+}
+
+DISCORD_APPDATA_DIRS = {
+    "DISCORD":       "discord",
+    "DISCORDPTB":    "discordptb",
+    "DISCORDCANARY": "discordcanary",
+    "MANUAL":        "discord",
+}
+
+
+def _get_portable_conf_path():
+    try:
+        base = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else sys.argv[0]))
+        candidate = os.path.join(base, "dcdns_portable.json")
+        if os.path.isfile(candidate):
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _load_portable_conf():
+    path = _get_portable_conf_path()
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _save_portable_conf(settings):
+    path = _get_portable_conf_path()
+    if not path:
+        return False
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(_normalize_payload_settings(settings), f, indent=2)
+        return True
+    except OSError:
+        return False
+
+
+def _is_portable_mode():
+    return _get_portable_conf_path() is not None
+
+
+def _normalize_payload_settings(settings):
+    conf = dict(DEFAULT_PAYLOAD_SETTINGS)
+    if settings:
+        for key in DEFAULT_PAYLOAD_SETTINGS:
+            if key in settings and settings[key] is not None:
+                conf[key] = settings[key]
+    return conf
+
+
 def _build_payload(settings):
-    """Build the JS payload with settings baked in as defaults."""
-    if not settings:
-        return DCDNS_PAYLOAD
-
+    conf = _normalize_payload_settings(settings)
     payload = DCDNS_PAYLOAD
+    marker = "var __conf = readConf();"
+    if marker not in payload:
+        raise RuntimeError("Payload marker not found — cannot bake settings into payload")
+    conf_json = json.dumps(conf, separators=(",", ":"))
+    baked = "var __conf = Object.assign({}, " + conf_json + ", readConf());"
+    result = payload.replace(marker, baked, 1)
+    if result.count(marker) > 0 or result.count("var __conf = Object.assign") != 1:
+        raise RuntimeError("Payload bake produced unexpected output — aborting")
+    return result
 
-    # Boolean flags
-    bool_map = {
-        "blockTelemetry":    "BLOCK_TELEMETRY_ENABLED",
-        "showLabel":         "DCDNS_LABEL_ENABLED",
-        "blockWebrtc":       "BLOCK_WEBRTC_LEAK",
-        "blockGeolocation":  "BLOCK_GEOLOCATION",
-        "disableSpellcheck": "DISABLE_SPELLCHECK",
-        "hardenTls":         "HARDEN_TLS",
-        "cleanUserAgent":    "CLEAN_USERAGENT",
-        "blockCrashReports": "BLOCK_CRASH_REPORTS",
-        "disableUpdateCheck":"DISABLE_UPDATE_CHECK",
-    }
-    for key, js_var in bool_map.items():
-        val = settings.get(key)
-        if val is False:
-            payload = re.sub(
-                r"var " + js_var + r" = (true|false);",
-                "var " + js_var + " = false;",
-                payload,
-            )
-        elif val is True:
-            payload = re.sub(
-                r"var " + js_var + r" = (true|false);",
-                "var " + js_var + " = true;",
-                payload,
-            )
 
-    # Custom DNS
-    primary  = str(settings.get("customDnsPrimary",  "") or "").strip()
-    fallback = str(settings.get("customDnsFallback", "") or "").strip()
-    if primary:
-        payload = re.sub(
-            r"var CUSTOM_DNS_PRIMARY\s*=\s*\([^;]+\);",
-            "var CUSTOM_DNS_PRIMARY = '" + primary.replace("'", "\\'") + "';",
-            payload,
-        )
-    if fallback:
-        payload = re.sub(
-            r"var CUSTOM_DNS_FALLBACK\s*=\s*\([^;]+\);",
-            "var CUSTOM_DNS_FALLBACK = '" + fallback.replace("'", "\\'") + "';",
-            payload,
-        )
-
-    # Custom User-Agent
-    custom_ua = str(settings.get("customUserAgent", "") or "").strip()
-    if custom_ua:
-        payload = re.sub(
-            r"var CUSTOM_USERAGENT\s*=\s*\([^;]+\);",
-            "var CUSTOM_USERAGENT = '" + custom_ua.replace("'", "\\'") + "';",
-            payload,
-        )
-
-    # Label position
-    label_pos = str(settings.get("labelPosition", "") or "").strip()
-    if label_pos:
-        payload = re.sub(
-            r"var LABEL_POSITION\s*=\s*[^;]+;",
-            "var LABEL_POSITION = '" + label_pos.replace("'", "\\'") + "';",
-            payload,
-        )
-
-    return payload
+def _write_discord_conf(flavor, settings):
+    if _is_portable_mode():
+        return _save_portable_conf(settings)
+    folder = DISCORD_APPDATA_DIRS.get(flavor, "discord")
+    roaming = os.getenv("APPDATA", "")
+    if not roaming:
+        return False
+    conf_dir = os.path.join(roaming, folder)
+    conf_path = os.path.join(conf_dir, "dcdns_conf.json")
+    try:
+        os.makedirs(conf_dir, exist_ok=True)
+        with open(conf_path, "w", encoding="utf-8") as f:
+            json.dump(_normalize_payload_settings(settings), f, indent=2)
+        return True
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -2024,6 +2368,18 @@ class Api:
                     self.window.evaluate_js(js)
                 except Exception:
                     pass
+        while True:
+            try:
+                js = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            with self._js_lock:
+                if not self.window:
+                    break
+                try:
+                    self.window.evaluate_js(js)
+                except Exception:
+                    pass
 
     def _log(self, msg):
         safe = msg.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
@@ -2034,8 +2390,22 @@ class Api:
 
     def scan_discord(self):
         try:
-            self.installations = DiscordDetector.find_installations()
-            return json.dumps(self.installations)
+            installs = DiscordDetector.find_installations()
+            for inst in installs:
+                try:
+                    p = inst.get("path", "")
+                    if p and os.path.isfile(p):
+                        age_days = (time.time() - os.path.getmtime(p)) / 86400
+                        inst["stale"] = age_days > 60
+                        inst["age_days"] = int(age_days)
+                    else:
+                        inst["stale"] = False
+                        inst["age_days"] = 0
+                except Exception:
+                    inst["stale"] = False
+                    inst["age_days"] = 0
+            self.installations = installs
+            return json.dumps(installs)
         except Exception:
             return json.dumps([])
 
@@ -2076,9 +2446,64 @@ class Api:
         except Exception as ex:
             return json.dumps({"error": str(ex)})
 
+    def get_mode(self):
+        return json.dumps({
+            "portable": _is_portable_mode(),
+            "portable_path": _get_portable_conf_path() or "",
+        })
+
+    def load_settings(self):
+        try:
+            portable = _load_portable_conf()
+            if portable:
+                return json.dumps(portable)
+            roaming = os.getenv("APPDATA", "")
+            if roaming:
+                for folder in DISCORD_APPDATA_DIRS.values():
+                    conf_path = os.path.join(roaming, folder, "dcdns_conf.json")
+                    if os.path.isfile(conf_path):
+                        try:
+                            with open(conf_path, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                            if isinstance(data, dict):
+                                return json.dumps(data)
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        return json.dumps({})
+
+    def save_settings(self, settings_json):
+        try:
+            settings = json.loads(settings_json)
+            if _is_portable_mode():
+                _save_portable_conf(settings)
+                return
+            roaming = os.getenv("APPDATA", "")
+            if not roaming:
+                return
+            normalized = _normalize_payload_settings(settings)
+            for folder in DISCORD_APPDATA_DIRS.values():
+                conf_dir = os.path.join(roaming, folder)
+                if os.path.isdir(conf_dir):
+                    try:
+                        conf_path = os.path.join(conf_dir, "dcdns_conf.json")
+                        with open(conf_path, "w", encoding="utf-8") as f:
+                            json.dump(normalized, f, indent=2)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+
     def open_discord(self):
         try:
             open_discord_invite()
+        except Exception:
+            pass
+
+    def open_website(self):
+        try:
+            open_website()
         except Exception:
             pass
 
@@ -2093,34 +2518,27 @@ class Api:
     def install(self, inst_json):
         if not self._op_lock.acquire(blocking=False):
             return "busy"
-        lock_held = True
         try:
             try:
                 inst = json.loads(inst_json)
             except Exception:
-                self._op_lock.release()
                 return "invalid"
             target = inst.get("path", "")
             if not target or not os.path.isfile(target):
-                self._op_lock.release()
                 return "invalid"
             backup = target + ".dcdns.bak"
             if os.path.exists(backup):
                 self._pending_install = inst
-                self._op_lock.release()
-                lock_held = False
                 return "ask_backup"
             threading.Thread(target=self._run_install, args=(inst, False), daemon=True).start()
-            lock_held = False
-            self._op_lock.release()
             return "ok"
         except Exception:
-            if lock_held:
-                try:
-                    self._op_lock.release()
-                except RuntimeError:
-                    pass
             return "invalid"
+        finally:
+            try:
+                self._op_lock.release()
+            except RuntimeError:
+                pass
 
     def install_confirm_backup(self, choice):
         if not self._op_lock.acquire(blocking=False):
@@ -2194,20 +2612,52 @@ class Api:
                 content = DiscordDetector.strip_payload(content)
 
             self._log("[5/7] Creating backup...")
+            bak_sha_file = backup + ".sha256"
             if os.path.exists(backup):
                 if overwrite_backup:
                     shutil.copyfile(target, backup)
+                    bak_sha = DiscordDetector.hash_file(backup)
+                    try:
+                        with open(bak_sha_file, "w", encoding="utf-8") as f:
+                            f.write(bak_sha)
+                    except OSError:
+                        pass
                     self._log("[+] Backup overwritten: " + os.path.basename(backup))
+                    if bak_sha:
+                        self._log("[+] Backup SHA-256: " + bak_sha)
                 else:
                     self._log("[!] Keeping existing backup.")
             else:
                 shutil.copyfile(target, backup)
+                bak_sha = DiscordDetector.hash_file(backup)
+                try:
+                    with open(bak_sha_file, "w", encoding="utf-8") as f:
+                        f.write(bak_sha)
+                except OSError:
+                    pass
                 self._log("[+] Backup created: " + os.path.basename(backup))
+                if bak_sha:
+                    self._log("[+] Backup SHA-256: " + bak_sha)
+
+            self._log("[5b/7] Writing config to Discord AppData...")
+            if _write_discord_conf(flavor, settings):
+                self._log("[+] Config written to Discord AppData.")
+            else:
+                self._log("[!] Could not write config file — payload will use baked defaults.")
 
             self._log("[6/7] Injecting DcDNS payload...")
             payload     = _build_payload(settings)
             new_content = payload + content
-            DiscordDetector.write_text(target, new_content)
+            for attempt in range(5):
+                try:
+                    DiscordDetector.write_text(target, new_content)
+                    break
+                except (PermissionError, OSError) as lock_err:
+                    if attempt < 4:
+                        self._log("[!] File locked, retrying in 1s... (" + str(attempt + 1) + "/5)")
+                        time.sleep(1)
+                    else:
+                        raise lock_err
 
             self._log("[7/7] Verifying injection...")
             if DiscordDetector._is_injected(target):
@@ -2255,7 +2705,29 @@ class Api:
                 self._log("[!] No running process detected.")
 
             self._log("[2/6] Looking for backup...")
+            bak_sha_file = backup + ".sha256"
             if os.path.exists(backup):
+                self._log("[2b/6] Verifying backup integrity...")
+                expected_sha = ""
+                try:
+                    with open(bak_sha_file, "r", encoding="utf-8") as f:
+                        expected_sha = f.read().strip()
+                except OSError:
+                    pass
+                if expected_sha:
+                    actual_sha = DiscordDetector.hash_file(backup)
+                    if actual_sha and actual_sha != expected_sha:
+                        self._log("[!] WARNING: Backup file SHA-256 mismatch!")
+                        self._log("[!] Expected: " + expected_sha)
+                        self._log("[!] Got:      " + actual_sha)
+                        self._log("[!] Backup may have been modified by another program.")
+                        self._log("[!] Aborting restore to protect your installation.")
+                        self._finish(False)
+                        return
+                    else:
+                        self._log("[+] Backup integrity verified.")
+                else:
+                    self._log("[!] No SHA record found — skipping integrity check.")
                 self._log("[3/6] Restoring from backup...")
                 shutil.copyfile(backup, target)
                 self._log("[+] File restored.")
@@ -2264,6 +2736,11 @@ class Api:
                     self._log("[+] Backup removed.")
                 except Exception as rem_ex:
                     self._log("[!] Could not remove backup: " + str(rem_ex))
+                try:
+                    if os.path.exists(bak_sha_file):
+                        os.remove(bak_sha_file)
+                except OSError:
+                    pass
             else:
                 self._log("[!] No backup — stripping payload manually...")
                 if not os.path.isfile(target):
@@ -2272,7 +2749,16 @@ class Api:
                 content = DiscordDetector.read_text(target)
                 if PAYLOAD_MARKER in content:
                     cleaned = DiscordDetector.strip_payload(content)
-                    DiscordDetector.write_text(target, cleaned)
+                    for attempt in range(5):
+                        try:
+                            DiscordDetector.write_text(target, cleaned)
+                            break
+                        except (PermissionError, OSError) as lock_err:
+                            if attempt < 4:
+                                self._log("[!] File locked, retrying in 1s... (" + str(attempt + 1) + "/5)")
+                                time.sleep(1)
+                            else:
+                                raise lock_err
                     self._log("[+] Payload stripped.")
                 else:
                     self._log("[!] No DcDNS payload found in file.")
@@ -2332,11 +2818,32 @@ class Api:
             self._finish(False)
 
 
-def open_discord_invite():
+def _open_url_bg(url):
     try:
-        webbrowser.open(DISCORD_INVITE_URL, new=2)
+        os.startfile(url)
+        return
     except Exception:
         pass
+    try:
+        subprocess.Popen(
+            ["rundll32", "url.dll,FileProtocolHandler", url],
+            shell=False,
+        )
+        return
+    except Exception:
+        pass
+    try:
+        webbrowser.open(url, new=2)
+    except Exception:
+        pass
+
+
+def open_discord_invite():
+    threading.Thread(target=_open_url_bg, args=(DISCORD_INVITE_URL,), daemon=True).start()
+
+
+def open_website():
+    threading.Thread(target=_open_url_bg, args=(WEBSITE_URL,), daemon=True).start()
 
 
 def _show_fatal_error(title, message):
