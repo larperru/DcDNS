@@ -5,6 +5,6 @@
 [v1.0.3](https://www.virustotal.com/gui/file/29fd9db599fa2c5b304466fec2aa9aa2d594ccf8d379a79a9f9a536bb18942bb)
 [v1.0.4](https://www.virustotal.com/gui/file/29fd9db599fa2c5b304466fec2aa9aa2d594ccf8d379a79a9f9a536bb18942bb)
 
--- SANDBOX HYBRID ANALYSIS - SOON
+-- SANDBOX HYBRID ANALYSIS 
 v1.0.3 https://hybrid-analysis.com/sample/29fd9db599fa2c5b304466fec2aa9aa2d594ccf8d379a79a9f9a536bb18942bb
 v1.0.4 https://hybrid-analysis.com/sample/2314ddaa3fbde4871389441b449a74e99c70ed0a0ce7d523fe3542e71fe1834e
