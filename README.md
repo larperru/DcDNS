@@ -194,6 +194,4 @@ See [LICENSE](LICENSE) for full terms.
 
 ---
 
-<p align="center">
-  <img width="758" height="512" alt="DcDNS Interface" src="https://github.com/user-attachments/assets/b843c23a-b7c6-4e52-a07f-1ba950afd30f" />
-</p>
+<img width="759" height="548" alt="image" src="https://github.com/user-attachments/assets/60322070-3a15-4de6-abb1-2da4ebe7f233" />
