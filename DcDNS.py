@@ -2,7 +2,7 @@
 # DcDNS
 # ==============================================================================
 # Author:      Larper.ru
-# Version:     v1.0.6
+# Version:     v1.0.7
 # License:     Custom Non-Commercial / No-Derivatives (Open Source - Read Only)
 # Repository:  https://github.com/larperru/DcDNS
 # Discord:     https://discord.gg/RNqC6eEQMR
@@ -42,7 +42,7 @@ except Exception:
 DISCORD_INVITE_URL = "https://discord.gg/9cu4Rf2ke2"
 WEBSITE_URL = "https://dcdns.pages.dev/"
 GITHUB_REPO_SLUG = "larperru/DcDNS"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 
 PAYLOAD_MARKER = "/* === [DcDNS Policy Framework"
 HEADER_TAG = "/* === [DcDNS Policy Framework v" + APP_VERSION + "] === */"
@@ -857,7 +857,7 @@ def _build_discord_grid():
             '<div class="discord-card" data-flavor="' + flavor + '" onclick="selectFlavor(\'' + flavor + '\')">'
             '<div class="dc-icon">' + CLIENT_LOGO_HTML + '</div>'
             '<div class="dc-name">' + name + '</div>'
-            '<div class="dc-ver" id="dc-ver-' + suffix + '"><span class="spinner"></span>Scanning</div>'
+            '<div class="dc-ver" id="dc-ver-' + suffix + '">Waiting...</div>'
             '<div class="dc-badge missing" id="dc-badge-' + suffix + '">Not found</div>'
             '</div>'
         )
@@ -1368,6 +1368,19 @@ waitForApi(function() {
 
 
 
+function safeBind(id, eventName, handler) {
+  try {
+    var el = document.getElementById(id);
+    if (el) {
+      el.addEventListener(eventName, function(evt) {
+        try { handler(evt); } catch (err) { console.error('[DcDNS] Handler error in ' + id + ':', err); }
+      });
+    }
+  } catch (err) {}
+}
+
+function safeEl(id) { try { return document.getElementById(id); } catch(e) { return null; } }
+
 window.selectedInstall = null;
 window.discordInstalls = [];
 window._backupResolve  = null;
@@ -1386,7 +1399,56 @@ safeBind('btn-website', 'click', function() {
     try { window.pywebview.api.open_website(); } catch (err) {}
   }, 20);
 });
-safeBind('btn-next', 'click', function() { showPage('install'); scanAll(); });
+safeBind('btn-next', 'click', function() {
+  var nextBtn = safeEl('btn-next');
+  if (nextBtn) nextBtn.disabled = true;
+  waitForApi(function() {
+    try {
+      window.pywebview.api.discord_exists().then(function(res) {
+        try {
+          var data = res && typeof res === 'string' ? JSON.parse(res) : res;
+          if (!data || !data.exists) {
+            showPage('install');
+            var statusEl = safeEl('install-status');
+            if (statusEl) {
+              statusEl.textContent = 'Discord is not installed on this computer. Please install Discord first.';
+              statusEl.className = 'status err';
+            }
+            var cards = document.querySelectorAll('.discord-card');
+            cards.forEach(function(card) {
+              var flavor = card.dataset.flavor;
+              var suffix = FLAVOR_MAP[flavor];
+              if (suffix) {
+                var verEl = safeEl('dc-ver-' + suffix);
+                var badgeEl = safeEl('dc-badge-' + suffix);
+                if (verEl) verEl.textContent = 'Not installed';
+                if (badgeEl) { badgeEl.textContent = 'Not found'; badgeEl.className = 'dc-badge missing'; }
+              }
+              card.dataset.path = '';
+              card.dataset.injected = '0';
+            });
+            var installBtn = safeEl('btn-install');
+            var uninstallBtn = safeEl('btn-uninstall');
+            if (installBtn) installBtn.disabled = true;
+            if (uninstallBtn) uninstallBtn.disabled = true;
+          } else {
+            showPage('install');
+            scanAll();
+          }
+        } catch(e) {
+          showPage('install');
+          scanAll();
+        }
+      }).catch(function() {
+        showPage('install');
+        scanAll();
+      });
+    } catch(e) {
+      showPage('install');
+      scanAll();
+    }
+  }, 20);
+});
 safeBind('btn-back1', 'click', function() {
   showPage('policy');
   var warnEl = safeEl('update-warning');
@@ -1467,9 +1529,17 @@ function badgeInfo(inst) {
 }
 
 function waitForApi(callback, retries) {
-  retries = retries === undefined ? 30 : retries;
-  try { if (window.pywebview && window.pywebview.api) { callback(); return; } } catch(e) {}
-  if (retries <= 0) return;
+  retries = (retries === undefined || retries === null) ? 30 : retries;
+  try {
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api === 'object') {
+      try { callback(); } catch(ce) { console.error('[DcDNS] waitForApi callback error:', ce); }
+      return;
+    }
+  } catch(e) {}
+  if (retries <= 0) {
+    console.warn('[DcDNS] waitForApi: API not available after max retries');
+    return;
+  }
   setTimeout(function() { waitForApi(callback, retries - 1); }, 200);
 }
 
@@ -1532,16 +1602,20 @@ function scanAll() {
   } catch (e) {}
 
   waitForApi(function() {
-    window.pywebview.api.scan_discord().then(function(res) {
-      try {
-        var data = JSON.parse(res);
-        _applyScanResults(data);
-      } catch (parseErr) {
+    try {
+      window.pywebview.api.scan_discord().then(function(res) {
+        try {
+          var data = (res && typeof res === 'string') ? JSON.parse(res) : (Array.isArray(res) ? res : []);
+          _applyScanResults(data);
+        } catch(parseErr) {
+          _applyScanResults([]);
+        }
+      }).catch(function() {
         _applyScanResults([]);
-      }
-    }).catch(function() {
+      });
+    } catch(e) {
       _applyScanResults([]);
-    });
+    }
   }, 40);
 }
 
@@ -1571,7 +1645,8 @@ function selectFlavor(flavor) {
     var dcdnsVersion= card.dataset.dcdnsVersion || '?';
     var sha256      = card.dataset.sha256 || '';
     window.selectedInstall = { flavor: flavor, path: card.dataset.path, version: card.dataset.version, injected: isInjected };
-    var displayName = card.querySelector('.dc-name') ? card.querySelector('.dc-name').textContent : flavor;
+    var dcNameEl = card ? card.querySelector('.dc-name') : null;
+    var displayName = (dcNameEl && dcNameEl.textContent) ? dcNameEl.textContent : flavor;
     if (verifyRow) verifyRow.style.display = sha256 ? '' : 'none';
     if (verifyHash) verifyHash.textContent = sha256 ? 'SHA-256: ' + sha256 : '';
     if (verifyBadge) {
@@ -1625,19 +1700,6 @@ function applySettingsToUI() {
     if (posRow) posRow.style.display = showLabel ? '' : 'none';
   } catch(e) {}
 }
-
-function safeBind(id, eventName, handler) {
-  try {
-    var el = document.getElementById(id);
-    if (el) {
-      el.addEventListener(eventName, function(evt) {
-        try { handler(evt); } catch (err) { console.error('[DcDNS] Handler error in ' + id + ':', err); }
-      });
-    }
-  } catch (err) {}
-}
-
-function safeEl(id) { try { return document.getElementById(id); } catch(e) { return null; } }
 
 safeBind('toggle-label', 'change', function() {
   try {
@@ -1706,15 +1768,29 @@ safeBind('btn-install', 'click', function() {
   var logBox = safeEl('log-box');
   if (logBox) logBox.innerHTML = '';
   waitForApi(function() {
-    window.pywebview.api.install(JSON.stringify(inst)).then(function(res) {
-      if (res === 'ask_backup') {
-        window.__dcdnsAskBackup().then(function(choice) {
-          waitForApi(function() {
-            window.pywebview.api.install_confirm_backup(choice);
-          }, 10);
-        });
-      }
-    }).catch(function() {});
+    try {
+      window.pywebview.api.install(JSON.stringify(inst)).then(function(res) {
+        try {
+          if (res === 'ask_backup') {
+            window.__dcdnsAskBackup().then(function(choice) {
+              waitForApi(function() {
+                try { window.pywebview.api.install_confirm_backup(choice); } catch(e) {}
+              }, 10);
+            }).catch(function() {});
+          } else if (res === 'busy') {
+            addLog('[!] Another operation is already running.');
+            finishLog(false);
+          } else if (res === 'invalid') {
+            addLog('[X] Invalid installation target.');
+            finishLog(false);
+          }
+        } catch(re) {}
+      }).catch(function(err) {
+        try { addLog('[X] Install call failed: ' + (err ? String(err) : 'unknown')); finishLog(false); } catch(e) {}
+      });
+    } catch(e) {
+      try { addLog('[X] Could not contact backend.'); finishLog(false); } catch(ie) {}
+    }
   }, 20);
 });
 
@@ -1726,16 +1802,38 @@ safeBind('btn-uninstall', 'click', function() {
   var logBox = safeEl('log-box');
   if (logBox) logBox.innerHTML = '';
   waitForApi(function() {
-    window.pywebview.api.uninstall(JSON.stringify(window.selectedInstall)).catch(function() {});
+    try {
+      window.pywebview.api.uninstall(JSON.stringify(window.selectedInstall)).then(function(res) {
+        try {
+          if (res === 'busy') { addLog('[!] Another operation is already running.'); finishLog(false); }
+          else if (res === 'invalid') { addLog('[X] Invalid installation target.'); finishLog(false); }
+        } catch(e) {}
+      }).catch(function(err) {
+        try { addLog('[X] Uninstall call failed: ' + (err ? String(err) : 'unknown')); finishLog(false); } catch(e) {}
+      });
+    } catch(e) {
+      try { addLog('[X] Could not contact backend.'); finishLog(false); } catch(ie) {}
+    }
   }, 20);
 });
 
 safeBind('btn-restart', 'click', function() {
   if (!window.selectedInstall) return;
   var restartBtn = safeEl('btn-restart');
-  if (restartBtn) restartBtn.disabled = true;
+  if (restartBtn) { try { restartBtn.disabled = true; } catch(e) {} }
   waitForApi(function() {
-    window.pywebview.api.restart_discord(JSON.stringify(window.selectedInstall)).catch(function() {});
+    try {
+      window.pywebview.api.restart_discord(JSON.stringify(window.selectedInstall)).then(function(res) {
+        try {
+          if (res === 'busy') { addLog('[!] Another operation is already running.'); finishLog(false); }
+          else if (res === 'invalid') { addLog('[X] Invalid target.'); finishLog(false); }
+        } catch(e) {}
+      }).catch(function(err) {
+        try { addLog('[X] Restart call failed: ' + (err ? String(err) : 'unknown')); finishLog(false); } catch(e) {}
+      });
+    } catch(e) {
+      try { addLog('[X] Could not contact backend.'); finishLog(false); } catch(ie) {}
+    }
   }, 20);
 });
 
@@ -1748,28 +1846,29 @@ function addLog(msg) {
   try {
     var box = safeEl('log-box');
     if (!box) return;
+    var text = (msg === null || msg === undefined) ? '' : String(msg);
     var line = document.createElement('div');
     line.className = 'log-line';
-    if (msg.startsWith('[+]')) line.className += ' ok';
-    else if (msg.startsWith('[X]') || msg.startsWith('[!] WARNING') || msg.startsWith('[!] Aborting')) line.className += ' err';
-    else if (msg.startsWith('[!]')) line.className += ' warn';
-    else if (msg.startsWith('===') || msg.indexOf('COMPLETE') !== -1 || msg.indexOf('->') !== -1) line.className += ' head';
-    line.textContent = msg;
+    if (text.indexOf('[+]') === 0) line.className += ' ok';
+    else if (text.indexOf('[X]') === 0 || text.indexOf('[!] WARNING') === 0 || text.indexOf('[!] Aborting') === 0) line.className += ' err';
+    else if (text.indexOf('[!]') === 0) line.className += ' warn';
+    else if (text.indexOf('===') === 0 || text.indexOf('COMPLETE') !== -1 || text.indexOf('->') !== -1) line.className += ' head';
+    line.textContent = text;
     box.appendChild(line);
-    box.scrollTop = box.scrollHeight;
+    try { box.scrollTop = box.scrollHeight; } catch(se) {}
   } catch(e) {}
 }
 
 function finishLog(ok) {
   try {
-    var back2  = safeEl('btn-back2');
-    var done   = safeEl('btn-done');
-    var restart= safeEl('btn-restart');
-    if (back2)   back2.disabled   = false;
-    if (done)    done.disabled    = false;
-    if (restart) restart.disabled = !ok;
-    var logTitle = safeEl('log-title');
-    if (logTitle) logTitle.textContent = ok ? 'Operation Complete' : 'Operation Failed';
+    var back2   = safeEl('btn-back2');
+    var done    = safeEl('btn-done');
+    var restart = safeEl('btn-restart');
+    var logTitle= safeEl('log-title');
+    if (back2)    { try { back2.disabled   = false; } catch(e) {} }
+    if (done)     { try { done.disabled    = false; } catch(e) {} }
+    if (restart)  { try { restart.disabled = !ok;   } catch(e) {} }
+    if (logTitle) { try { logTitle.textContent = ok ? 'Operation Complete' : 'Operation Failed'; } catch(e) {} }
   } catch(e) {}
 }
 </script>
@@ -1782,8 +1881,7 @@ class DiscordRPC:
     PIPE_PATH_TEMPLATE = r"\\.\pipe\discord-ipc-{}"
 
     def __init__(self):
-        self._sock = None
-        self._connected = False
+        self._handle = None
         self._active = False
         self._lock = threading.Lock()
         self._thread = None
@@ -1791,66 +1889,37 @@ class DiscordRPC:
         self._start_time = int(time.time())
 
     def _connect(self):
+        import ctypes
+        import ctypes.wintypes
+        GENERIC_READ  = 0x80000000
+        GENERIC_WRITE = 0x40000000
+        OPEN_EXISTING = 3
         for i in range(10):
             pipe = self.PIPE_PATH_TEMPLATE.format(i)
             try:
-                import ctypes
-                import ctypes.wintypes
-                GENERIC_READ  = 0x80000000
-                GENERIC_WRITE = 0x40000000
-                OPEN_EXISTING = 3
                 handle = ctypes.windll.kernel32.CreateFileW(
                     pipe, GENERIC_READ | GENERIC_WRITE, 0, None,
                     OPEN_EXISTING, 0, None
                 )
-                if handle == ctypes.wintypes.HANDLE(-1).value:
-                    continue
-                self._handle = handle
-                return True
+                if handle and handle != ctypes.wintypes.HANDLE(-1).value:
+                    self._handle = handle
+                    return True
             except Exception:
                 continue
         return False
 
-    def _write_pipe(self, data):
-        try:
-            import ctypes
-            payload = data.encode("utf-8")
-            buf = ctypes.create_string_buffer(payload)
-            written = ctypes.c_ulong(0)
-            ctypes.windll.kernel32.WriteFile(
-                self._handle, buf, len(payload),
-                ctypes.byref(written), None
-            )
-            return written.value == len(payload)
-        except Exception:
-            return False
-
-    def _read_pipe(self, size=65536):
-        try:
-            import ctypes
-            buf = ctypes.create_string_buffer(size)
-            read = ctypes.c_ulong(0)
-            ctypes.windll.kernel32.ReadFile(
-                self._handle, buf, size,
-                ctypes.byref(read), None
-            )
-            return buf.raw[:read.value]
-        except Exception:
-            return b""
-
     def _send_frame(self, op, payload):
         try:
-            data = json.dumps(payload).encode("utf-8")
+            import ctypes
+            data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             header = struct.pack("<II", op, len(data))
             full = header + data
-            import ctypes
             buf = ctypes.create_string_buffer(full)
             written = ctypes.c_ulong(0)
-            ctypes.windll.kernel32.WriteFile(
-                self._handle, buf, len(full),
-                ctypes.byref(written), None
+            ok = ctypes.windll.kernel32.WriteFile(
+                self._handle, buf, len(full), ctypes.byref(written), None
             )
-            return written.value == len(full)
+            return bool(ok) and written.value == len(full)
         except Exception:
             return False
 
@@ -1859,84 +1928,91 @@ class DiscordRPC:
             import ctypes
             hdr_buf = ctypes.create_string_buffer(8)
             read = ctypes.c_ulong(0)
-            ctypes.windll.kernel32.ReadFile(
-                self._handle, hdr_buf, 8,
-                ctypes.byref(read), None
-            )
+            ctypes.windll.kernel32.ReadFile(self._handle, hdr_buf, 8, ctypes.byref(read), None)
             if read.value < 8:
                 return None, None
             op, length = struct.unpack("<II", hdr_buf.raw[:8])
             if length == 0:
                 return op, {}
             data_buf = ctypes.create_string_buffer(length)
-            ctypes.windll.kernel32.ReadFile(
-                self._handle, data_buf, length,
-                ctypes.byref(read), None
-            )
-            return op, json.loads(data_buf.raw[:read.value].decode("utf-8"))
+            ctypes.windll.kernel32.ReadFile(self._handle, data_buf, length, ctypes.byref(read), None)
+            try:
+                return op, json.loads(data_buf.raw[:read.value].decode("utf-8"))
+            except Exception:
+                return op, {}
         except Exception:
             return None, None
 
     def _close_handle(self):
         try:
             import ctypes
-            if hasattr(self, "_handle") and self._handle:
+            if self._handle:
                 ctypes.windll.kernel32.CloseHandle(self._handle)
                 self._handle = None
         except Exception:
             pass
 
+    def _build_presence(self):
+        return {
+            "cmd": "SET_ACTIVITY",
+            "args": {
+                "pid": os.getpid(),
+                "activity": {
+                    "details": "DcDNS",
+                    "state": "Privacy framework for Discord",
+                    "timestamps": {"start": self._start_time},
+                    "assets": {
+                        "large_image": "dcdns_logo",
+                        "large_text": "DcDNS v" + APP_VERSION,
+                    },
+                    "buttons": [
+                        {"label": "Website", "url": "https://dcdns.pages.dev/"},
+                        {"label": "GitHub", "url": "https://github.com/" + GITHUB_REPO_SLUG},
+                    ],
+                    "type": 0,
+                },
+            },
+            "nonce": str(int(time.time() * 1000)),
+        }
+
     def _rpc_loop(self):
+        _rpc_backoff = 15
         while self._enabled:
             try:
                 if not self._connect():
                     self._active = False
-                    time.sleep(15)
+                    time.sleep(_rpc_backoff)
+                    _rpc_backoff = min(_rpc_backoff * 2, 120)
                     continue
 
-                handshake = {"v": 1, "client_id": self.CLIENT_ID}
-                if not self._send_frame(0, handshake):
+                _rpc_backoff = 15
+
+                if not self._send_frame(0, {"v": 1, "client_id": self.CLIENT_ID}):
                     self._close_handle()
                     self._active = False
-                    time.sleep(15)
+                    time.sleep(_rpc_backoff)
                     continue
 
                 op, resp = self._recv_frame()
                 if op is None:
                     self._close_handle()
                     self._active = False
-                    time.sleep(15)
+                    time.sleep(_rpc_backoff)
                     continue
 
-                presence = {
-                    "cmd": "SET_ACTIVITY",
-                    "args": {
-                        "pid": os.getpid(),
-                        "activity": {
-                            "details": "Privacy-hardened \u2022 DoH \u2022 Telemetry blocked",
-                            "state": "DcDNS v" + APP_VERSION + " active",
-                            "timestamps": {"start": self._start_time},
-                            "assets": {
-                                "large_image": "dcdns_logo",
-                                "large_text": "DcDNS \u2014 Privacy Framework for Discord",
-                                "small_image": "dcdns_shield",
-                                "small_text": "DNS encrypted via DNS-over-HTTPS",
-                            },
-                            "buttons": [
-                                {"label": "Get DcDNS", "url": "https://dcdns.pages.dev/"},
-                                {"label": "GitHub", "url": "https://github.com/" + GITHUB_REPO_SLUG},
-                            ],
-                            "type": 0,
-                        }
-                    },
-                    "nonce": str(int(time.time() * 1000))
-                }
-                self._send_frame(1, presence)
+                presence = self._build_presence()
+                if not self._send_frame(1, presence):
+                    self._close_handle()
+                    self._active = False
+                    time.sleep(_rpc_backoff)
+                    continue
+
                 self._recv_frame()
                 self._active = True
 
                 while self._enabled:
-                    time.sleep(30)
+                    time.sleep(15)
+                    presence = self._build_presence()
                     if not self._send_frame(1, presence):
                         break
                     self._recv_frame()
@@ -1947,7 +2023,8 @@ class DiscordRPC:
             except Exception:
                 self._close_handle()
                 self._active = False
-                time.sleep(15)
+                time.sleep(_rpc_backoff)
+                _rpc_backoff = min(_rpc_backoff * 2, 120)
 
     def start(self):
         with self._lock:
@@ -2063,7 +2140,7 @@ def _build_payload(settings):
     if marker not in payload:
         raise RuntimeError("Payload marker not found - cannot bake settings into payload")
     conf_json = json.dumps(conf, separators=(",", ":"))
-    baked = "var __conf = Object.assign({}, " + conf_json + ", readConf());"
+    baked = "var __conf = Object.assign({}, " + conf_json + ", (function(){var r=readConf();return r&&typeof r==='object'?r:{};}()));"
     result = payload.replace(marker, baked, 1)
     if result.count(marker) > 0 or result.count("var __conf = Object.assign") != 1:
         raise RuntimeError("Payload bake produced unexpected output - aborting")
@@ -2090,116 +2167,57 @@ def _write_discord_conf(flavor, settings):
 
 class DiscordDetector:
     @staticmethod
+    def _make_entry(flavor, path):
+        status = DiscordDetector.get_injection_status(path)
+        return {
+            "flavor": flavor,
+            "version": DiscordDetector._get_version(path),
+            "path": path,
+            "injected": status["injected"],
+            "dcdns_version": status["dcdns_version"],
+            "up_to_date": status["up_to_date"],
+            "chrome_version": DiscordDetector._get_chrome_version(path),
+            "sha256": DiscordDetector.hash_file(path),
+        }
+
+    @staticmethod
     def find_installations():
+        NO_WINDOW = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         best = {}
 
-        def score(path):
+        def _mtime(p):
             try:
-                return os.path.getmtime(path)
+                return os.path.getmtime(p)
             except Exception:
                 return 0
 
         def consider(path, flavor):
             if not path or not os.path.isfile(path):
                 return
-            norm = os.path.normcase(os.path.normpath(path))
-            if flavor not in best or score(path) > score(best[flavor]["path"]):
-                status = DiscordDetector.get_injection_status(path)
-                ver = DiscordDetector._get_version(path)
-                sha = DiscordDetector.hash_file(path)
-                chrome_ver = DiscordDetector._get_chrome_version(path)
-                best[flavor] = {
-                    "flavor": flavor, "version": ver, "path": path,
-                    "injected": status["injected"],
-                    "dcdns_version": status["dcdns_version"],
-                    "up_to_date": status["up_to_date"],
-                    "chrome_version": chrome_ver,
-                    "sha256": sha,
-                }
-
-        def glob_consider(pattern, flavor):
             try:
-                for p in glob.glob(pattern):
-                    consider(p, flavor)
+                norm = os.path.normcase(os.path.normpath(path))
             except Exception:
-                pass
-
-        def glob_consider_r(pattern, flavor):
-            try:
-                for p in glob.glob(pattern, recursive=True):
-                    consider(p, flavor)
-            except Exception:
-                pass
-
-        def scan_roaming_dir(base, flavor):
-            if not base or not os.path.isdir(base):
                 return
-            for mod_dir in glob.glob(os.path.join(base, "modules")):
-                for mod_path in glob.glob(os.path.join(mod_dir, "discord_desktop_core-*")):
-                    direct = os.path.join(mod_path, "index.js")
-                    if os.path.isfile(direct):
-                        consider(direct, flavor)
-                    nested = os.path.join(mod_path, "discord_desktop_core", "index.js")
-                    if os.path.isfile(nested):
-                        consider(nested, flavor)
-
-        def scan_local_dir(base, flavor):
-            if not base or not os.path.isdir(base):
-                return
-            glob_consider(os.path.join(base, "app-*", "modules", "discord_desktop_core", "index.js"), flavor)
-            glob_consider(os.path.join(base, "app-*", "modules", "discord_desktop_core-*", "discord_desktop_core", "index.js"), flavor)
-            glob_consider(os.path.join(base, "app-*", "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"), flavor)
-            glob_consider(os.path.join(base, "*", "modules", "discord_desktop_core", "index.js"), flavor)
-            glob_consider(os.path.join(base, "*", "modules", "discord_desktop_core-*", "discord_desktop_core", "index.js"), flavor)
-            glob_consider(os.path.join(base, "*", "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"), flavor)
-            glob_consider(os.path.join(base, "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"), flavor)
-            glob_consider(os.path.join(base, "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"), flavor)
-            glob_consider_r(os.path.join(base, "**", "discord_desktop_core", "index.js"), flavor)
-
-        def reg_query(key_path, value_name=""):
-            try:
-                import winreg
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
-                    val, _ = winreg.QueryValueEx(k, value_name)
-                    return val
-            except Exception:
-                return None
-
-        def get_running_discord_paths():
-            paths = []
-            ps_cmd = (
-                "Get-Process | Where-Object {$_.ProcessName -match '^Discord'} "
-                "| Select-Object -ExpandProperty Path"
-            )
-            try:
-                result = subprocess.run(
-                    ["powershell", "-NoProfile", "-NonInteractive",
-                     "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
-                    capture_output=True, text=True, timeout=10,
-                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
-                )
-                for line in result.stdout.splitlines():
-                    line = line.strip()
-                    if line and line.lower().endswith(".exe") and os.path.isfile(line):
-                        paths.append(line)
-            except Exception:
-                pass
-            if not paths:
+            cur = best.get(flavor)
+            if cur is None or _mtime(path) > _mtime(cur["path"]):
                 try:
-                    result = subprocess.run(
-                        ["wmic", "process", "where",
-                         "name='Discord.exe' or name='DiscordPTB.exe' or name='DiscordCanary.exe'",
-                         "get", "ExecutablePath"],
-                        capture_output=True, text=True, timeout=8,
-                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
-                    )
-                    for line in result.stdout.splitlines():
-                        line = line.strip()
-                        if line and line.lower().endswith(".exe") and os.path.isfile(line):
-                            paths.append(line)
+                    best[flavor] = DiscordDetector._make_entry(flavor, path)
                 except Exception:
                     pass
-            return paths
+
+        seen_paths = set()
+
+        def dedup_consider(path, flavor):
+            if not path:
+                return
+            try:
+                key = os.path.normcase(os.path.normpath(path))
+            except Exception:
+                return
+            if key in seen_paths:
+                return
+            seen_paths.add(key)
+            consider(path, flavor)
 
         WIN_FLAVORS = [
             ("discord",       "Discord",        "DISCORD"),
@@ -2210,93 +2228,251 @@ class DiscordDetector:
         local       = os.getenv("LOCALAPPDATA", "")
         roaming     = os.getenv("APPDATA", "")
         userprofile = os.getenv("USERPROFILE", os.path.expanduser("~"))
-        pf          = os.getenv("ProgramFiles", r"C:\Program Files")
+        pf          = os.getenv("ProgramFiles",      r"C:\Program Files")
         pf86        = os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
 
-        roaming_bases = [
-            roaming,
-            os.path.join(userprofile, "AppData", "Roaming"),
-        ]
-        local_bases = [
-            local,
-            os.path.join(userprofile, "AppData", "Local"),
-        ]
-
-        seen_dedup = set()
-        def dedup(lst):
+        def _norm_unique(*paths):
+            seen = set()
             out = []
-            for x in lst:
-                if not x:
+            for p in paths:
+                if not p:
                     continue
-                n = os.path.normcase(os.path.normpath(x))
-                if n not in seen_dedup:
-                    seen_dedup.add(n)
-                    out.append(x)
+                n = os.path.normcase(os.path.normpath(p))
+                if n not in seen:
+                    seen.add(n)
+                    out.append(p)
             return out
 
+        roaming_bases = _norm_unique(roaming, os.path.join(userprofile, "AppData", "Roaming"))
+        local_bases   = _norm_unique(local,   os.path.join(userprofile, "AppData", "Local"))
+
+        def _glob_consider(pattern, flavor, recursive=False):
+            try:
+                kwargs = {"recursive": True} if recursive else {}
+                for p in glob.glob(pattern, **kwargs):
+                    if os.path.isfile(p):
+                        dedup_consider(p, flavor)
+            except Exception:
+                pass
+
+        def _scan_dir_for_index(base, flavor):
+            if not base or not os.path.isdir(base):
+                return
+            globs = [
+                os.path.join(base, "app-*",  "modules", "discord_desktop_core-*", "discord_desktop_core", "index.js"),
+                os.path.join(base, "app-*",  "modules", "discord_desktop_core",   "index.js"),
+                os.path.join(base, "app-*",  "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"),
+                os.path.join(base, "modules", "discord_desktop_core-*", "discord_desktop_core", "index.js"),
+                os.path.join(base, "modules", "discord_desktop_core", "index.js"),
+                os.path.join(base, "resources", "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"),
+                os.path.join(base, "app.asar.unpacked", "node_modules", "discord_desktop_core", "index.js"),
+            ]
+            for pat in globs:
+                _glob_consider(pat, flavor)
+            _glob_consider(os.path.join(base, "**", "discord_desktop_core", "index.js"), flavor, recursive=True)
+
+        def _reg_query(hive, key_path, value_name=""):
+            try:
+                import winreg
+                with winreg.OpenKey(hive, key_path) as k:
+                    val, _ = winreg.QueryValueEx(k, value_name)
+                    return str(val) if val else None
+            except Exception:
+                return None
+
+        def _reg_scan_all_flavors():
+            import winreg
+            reg_map = {
+                "DISCORD":       r"Software\Discord",
+                "DISCORDPTB":    r"Software\DiscordPTB",
+                "DISCORDCANARY": r"Software\DiscordCanary",
+            }
+            uninstall_roots = [
+                r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+                r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+            ]
+            hives = [winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE]
+
+            for flavor, rk in reg_map.items():
+                for hive in hives:
+                    for val_name in ("", "InstallLocation", "Path", "InstallDir", "DisplayIcon"):
+                        val = _reg_query(hive, rk, val_name)
+                        if val:
+                            p = val.split(",")[0].strip().strip('"')
+                            if os.path.exists(p):
+                                _scan_dir_for_index(p, flavor)
+                                r = DiscordDetector.resolve_index_js(p)
+                                if r:
+                                    dedup_consider(r, flavor)
+
+            discord_app_ids = {
+                "DISCORD":       "{846B0CB7-AA2A-4EAF-887A-3B8A8D18FB31}_is1",
+                "DISCORDPTB":    "{F3A3F8FF-E1DC-42DB-AADF-F0D1EFFC1337}_is1",
+                "DISCORDCANARY": "{3B70B640-C4C1-4FA4-A21B-E3A7A0A0B2F5}_is1",
+            }
+            for flavor, app_id in discord_app_ids.items():
+                for hive in hives:
+                    for root in uninstall_roots:
+                        key_path = root + "\\" + app_id
+                        for val_name in ("InstallLocation", "DisplayIcon", ""):
+                            val = _reg_query(hive, key_path, val_name)
+                            if val:
+                                p = val.split(",")[0].strip().strip('"')
+                                if os.path.exists(p):
+                                    _scan_dir_for_index(p, flavor)
+                                    r = DiscordDetector.resolve_index_js(p)
+                                    if r:
+                                        dedup_consider(r, flavor)
+
+        def _get_running_discord_exe_paths():
+            paths = []
+            methods = [
+                {
+                    "cmd": ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+                            "Get-Process -ErrorAction SilentlyContinue | "
+                            "Where-Object { $_.ProcessName -match '(?i)^discord' } | "
+                            "Select-Object -ExpandProperty Path"],
+                    "timeout": 12,
+                },
+                {
+                    "cmd": ["wmic", "process", "where",
+                            "name like 'Discord%'",
+                            "get", "ExecutablePath", "/format:csv"],
+                    "timeout": 8,
+                },
+            ]
+            for m in methods:
+                try:
+                    r = subprocess.run(
+                        m["cmd"], capture_output=True, text=True,
+                        timeout=m["timeout"], creationflags=NO_WINDOW,
+                    )
+                    for line in r.stdout.splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if "," in line:
+                            line = line.split(",")[-1].strip()
+                        if line.lower().endswith(".exe") and os.path.isfile(line):
+                            paths.append(line)
+                except Exception:
+                    pass
+                if paths:
+                    break
+
+            if not paths:
+                try:
+                    import ctypes
+                    import ctypes.wintypes
+                    TH32CS_SNAPPROCESS = 0x00000002
+                    class PROCESSENTRY32(ctypes.Structure):
+                        _fields_ = [
+                            ("dwSize",              ctypes.c_ulong),
+                            ("cntUsage",            ctypes.c_ulong),
+                            ("th32ProcessID",       ctypes.c_ulong),
+                            ("th32DefaultHeapID",   ctypes.POINTER(ctypes.c_ulong)),
+                            ("th32ModuleID",        ctypes.c_ulong),
+                            ("cntThreads",          ctypes.c_ulong),
+                            ("th32ParentProcessID", ctypes.c_ulong),
+                            ("pcPriClassBase",      ctypes.c_long),
+                            ("dwFlags",             ctypes.c_ulong),
+                            ("szExeFile",           ctypes.c_char * 260),
+                        ]
+                    snap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+                    if snap and snap != ctypes.wintypes.HANDLE(-1).value:
+                        entry = PROCESSENTRY32()
+                        entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+                        discord_pids = []
+                        if ctypes.windll.kernel32.Process32First(snap, ctypes.byref(entry)):
+                            while True:
+                                name = entry.szExeFile.decode("utf-8", errors="ignore").lower()
+                                if name.startswith("discord") and name.endswith(".exe"):
+                                    discord_pids.append(entry.th32ProcessID)
+                                if not ctypes.windll.kernel32.Process32Next(snap, ctypes.byref(entry)):
+                                    break
+                        ctypes.windll.kernel32.CloseHandle(snap)
+                        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                        MAX_PATH = 32768
+                        for pid in discord_pids:
+                            try:
+                                h = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                                if h and h != ctypes.wintypes.HANDLE(-1).value:
+                                    buf = ctypes.create_unicode_buffer(MAX_PATH)
+                                    size = ctypes.c_ulong(MAX_PATH)
+                                    if ctypes.windll.kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                                        p = buf.value
+                                        if p and os.path.isfile(p):
+                                            paths.append(p)
+                                    ctypes.windll.kernel32.CloseHandle(h)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            return list(dict.fromkeys(paths))
+
         for lower, title, flavor in WIN_FLAVORS:
-            for base in dedup(roaming_bases):
-                scan_roaming_dir(os.path.join(base, lower), flavor)
-                scan_roaming_dir(os.path.join(base, title), flavor)
-                scan_roaming_dir(os.path.join(base, lower.capitalize()), flavor)
-            for base in dedup(local_bases):
-                for name_variant in (lower, title, lower.capitalize()):
-                    candidate_dir = os.path.join(base, name_variant)
-                    scan_local_dir(candidate_dir, flavor)
-                    scan_roaming_dir(candidate_dir, flavor)
-                    if os.path.isdir(candidate_dir):
+            for base in roaming_bases:
+                for name_var in _norm_unique(lower, title, lower.capitalize()):
+                    d = os.path.join(base, name_var)
+                    _scan_dir_for_index(d, flavor)
+            for base in local_bases:
+                for name_var in _norm_unique(lower, title, lower.capitalize()):
+                    d = os.path.join(base, name_var)
+                    _scan_dir_for_index(d, flavor)
+                    if os.path.isdir(d):
                         try:
-                            for sub in os.listdir(candidate_dir):
-                                sub_path = os.path.join(candidate_dir, sub)
-                                if os.path.isdir(sub_path):
-                                    scan_local_dir(sub_path, flavor)
-                                    scan_roaming_dir(sub_path, flavor)
+                            for sub in os.listdir(d):
+                                sd = os.path.join(d, sub)
+                                if os.path.isdir(sd):
+                                    _scan_dir_for_index(sd, flavor)
                         except OSError:
                             pass
-            for prog in [pf, pf86]:
-                if not prog:
-                    continue
-                scan_local_dir(os.path.join(prog, title), flavor)
+            for prog in _norm_unique(pf, pf86):
+                for name_var in _norm_unique(title, lower, lower.capitalize()):
+                    _scan_dir_for_index(os.path.join(prog, name_var), flavor)
 
-        reg_keys = {
-            "DISCORD":       r"Software\Discord",
-            "DISCORDPTB":    r"Software\DiscordPTB",
-            "DISCORDCANARY": r"Software\DiscordCanary",
-        }
-        for flavor, rk in reg_keys.items():
-            for val_name in ("", "InstallLocation", "Path", "InstallDir"):
-                reg_path = reg_query(rk, val_name)
-                if reg_path and os.path.exists(reg_path):
-                    scan_local_dir(reg_path, flavor)
-                    scan_roaming_dir(reg_path, flavor)
-                    resolved = DiscordDetector.resolve_index_js(reg_path)
-                    if resolved:
-                        consider(resolved, flavor)
+        try:
+            _reg_scan_all_flavors()
+        except Exception:
+            pass
 
-        for exe_path in get_running_discord_paths():
+        for exe_path in _get_running_discord_exe_paths():
             flavor = DiscordDetector.guess_flavor(exe_path)
             if flavor == "MANUAL":
                 continue
             exe_dir = os.path.dirname(exe_path)
-            scan_local_dir(exe_dir, flavor)
-            scan_roaming_dir(exe_dir, flavor)
-            resolved = DiscordDetector.resolve_index_js(exe_dir)
-            if resolved:
-                consider(resolved, flavor)
-            parent = os.path.dirname(exe_dir)
-            scan_local_dir(parent, flavor)
-            scan_roaming_dir(parent, flavor)
+            for d in _norm_unique(exe_dir, os.path.dirname(exe_dir)):
+                _scan_dir_for_index(d, flavor)
+                r = DiscordDetector.resolve_index_js(d)
+                if r:
+                    dedup_consider(r, flavor)
+
+        try:
+            import winreg
+            for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                for base_key in (
+                    r"Software\Microsoft\Windows\CurrentVersion\App Paths\Discord.exe",
+                    r"Software\Microsoft\Windows\CurrentVersion\App Paths\DiscordPTB.exe",
+                    r"Software\Microsoft\Windows\CurrentVersion\App Paths\DiscordCanary.exe",
+                ):
+                    val = _reg_query(hive, base_key, "")
+                    if val:
+                        p = val.strip().strip('"')
+                        if os.path.isfile(p):
+                            fl = DiscordDetector.guess_flavor(p)
+                            if fl != "MANUAL":
+                                d = os.path.dirname(p)
+                                _scan_dir_for_index(d, fl)
+                                _scan_dir_for_index(os.path.dirname(d), fl)
+        except Exception:
+            pass
 
         results = []
         for flavor in FLAVORS:
             cand = best.get(flavor)
             if cand:
-                results.append({
-                    "flavor": cand["flavor"], "version": cand["version"], "path": cand["path"],
-                    "injected": cand["injected"], "dcdns_version": cand["dcdns_version"],
-                    "up_to_date": cand["up_to_date"], "chrome_version": cand["chrome_version"],
-                    "sha256": cand["sha256"],
-                })
+                results.append(cand)
         return results
 
     @staticmethod
@@ -2405,13 +2581,40 @@ class DiscordDetector:
 
     @staticmethod
     def strip_payload(content):
-        start = content.find(PAYLOAD_MARKER)
-        end   = content.find(FOOTER_TAG)
-        if start != -1 and end != -1:
+        if not content:
+            return content
+        passes = 0
+        while PAYLOAD_MARKER in content and passes < 4:
+            start = content.find(PAYLOAD_MARKER)
+            if start == -1:
+                break
+            end = content.find(FOOTER_TAG, start)
+            if end == -1:
+                before = content[:start].rstrip("\r\n")
+                content = before if before else ""
+                break
             end += len(FOOTER_TAG)
-            stripped = content[:start] + content[end:]
-            return stripped.lstrip("\n")
+            before = content[:start].rstrip("\r\n")
+            after  = content[end:].lstrip("\r\n")
+            if before and after:
+                content = before + "\n" + after
+            elif after:
+                content = after
+            elif before:
+                content = before
+            else:
+                content = ""
+            passes += 1
         return content
+
+    @staticmethod
+    def strip_payload_safe(content):
+        stripped = DiscordDetector.strip_payload(content)
+        if stripped is None:
+            return None, "Strip produced None"
+        if PAYLOAD_MARKER in stripped:
+            return None, "Payload marker still present after strip - possible corruption"
+        return stripped, "OK"
 
     @staticmethod
     def _find_upwards(start_path, filename, max_depth=8):
@@ -2494,19 +2697,279 @@ class DiscordDetector:
             return os.path.expanduser("~")
 
     @staticmethod
-    def kill_processes(names):
-        killed = 0
-        for name in names:
+    def _is_pid_alive(pid):
+        import ctypes
+        import ctypes.wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        SYNCHRONIZE = 0x00100000
+        STILL_ACTIVE = 259
+        try:
+            handle = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid
+            )
+            if not handle or handle == ctypes.wintypes.HANDLE(-1).value:
+                return False
+            exit_code = ctypes.c_ulong(0)
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            ctypes.windll.kernel32.CloseHandle(handle)
+            if not ok:
+                return False
+            if exit_code.value != STILL_ACTIVE:
+                return False
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def is_valid_discord_target(path):
+        if not path or not os.path.isfile(path):
+            return False, "File does not exist"
+        try:
+            size = os.path.getsize(path)
+        except OSError as e:
+            return False, "Cannot stat file: " + str(e)
+        if size == 0:
+            return False, "File is empty"
+        if size < 512:
+            return False, "File is too small to be a valid index.js (" + str(size) + " bytes)"
+        norm = path.replace("\\", "/").lower()
+        if "discord" not in norm:
+            return False, "Path does not contain 'discord' - not a Discord installation"
+        if not norm.endswith("index.js"):
+            return False, "Target must be index.js"
+        if "discord_desktop_core" not in norm and "app.asar.unpacked" not in norm:
+            return False, "Path does not look like a Discord core module"
+        try:
+            with open(path, "r", encoding="utf-8", errors="surrogateescape") as f:
+                head = f.read(4096)
+        except OSError as e:
+            return False, "Cannot read file: " + str(e)
+        if PAYLOAD_MARKER in head:
+            return True, "OK"
+        discord_signatures = [
+            "require(",
+            "module.exports",
+            "electron",
+            "discord",
+        ]
+        matched = sum(1 for sig in discord_signatures if sig.lower() in head.lower())
+        if matched < 2:
             try:
-                exe = name if name.lower().endswith(".exe") else name + ".exe"
-                result = subprocess.run(
-                    ["taskkill", "/F", "/IM", exe],
-                    capture_output=True, text=True, timeout=8,
-                )
-                if result.returncode == 0:
-                    killed += 1
+                with open(path, "r", encoding="utf-8", errors="surrogateescape") as f:
+                    full = f.read(65536)
+                matched = sum(1 for sig in discord_signatures if sig.lower() in full.lower())
             except Exception:
+                pass
+        if matched < 2:
+            return False, "File content does not look like a Discord Electron module"
+        return True, "OK"
+
+    @staticmethod
+    def _get_pids_by_names(names):
+        NO_WINDOW = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        collected = {}
+        for name in names:
+            exe = name if name.lower().endswith(".exe") else name + ".exe"
+            exe_lower = exe.lower()
+            found = []
+            try:
+                ps_cmd = (
+                    "$name='" + exe + "';"
+                    "Get-Process -ErrorAction SilentlyContinue"
+                    " | Where-Object {$_.ProcessName -eq [System.IO.Path]::GetFileNameWithoutExtension($name)}"
+                    " | Select-Object -ExpandProperty Id"
+                )
+                result = subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive",
+                     "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=NO_WINDOW,
+                )
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    if line.isdigit():
+                        found.append(int(line))
+            except Exception:
+                pass
+            if not found:
+                try:
+                    result = subprocess.run(
+                        ["wmic", "process", "where", "name='" + exe + "'", "get", "ProcessId"],
+                        capture_output=True, text=True, timeout=8,
+                        creationflags=NO_WINDOW,
+                    )
+                    for line in result.stdout.splitlines():
+                        line = line.strip()
+                        if line.isdigit() and line != "0":
+                            found.append(int(line))
+                except Exception:
+                    pass
+            for pid in found:
+                if pid not in collected:
+                    collected[pid] = exe
+        alive = []
+        for pid, exe in collected.items():
+            if DiscordDetector._is_pid_alive(pid):
+                alive.append((pid, exe))
+        return alive
+
+    @staticmethod
+    def kill_processes(names, log_fn=None):
+        NO_WINDOW = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+
+        def _log(msg):
+            if log_fn:
+                log_fn(msg)
+
+        import ctypes
+        import ctypes.wintypes
+
+        PROCESS_TERMINATE             = 0x0001
+        PROCESS_QUERY_LIMITED_INFO    = 0x1000
+        SYNCHRONIZE                   = 0x00100000
+        STILL_ACTIVE                  = 259
+        INVALID_HANDLE                = ctypes.wintypes.HANDLE(-1).value
+        WM_CLOSE                      = 0x0010
+        WM_QUIT                       = 0x0012
+        CTRL_CLOSE_EVENT              = 2
+
+        EnumWindowsProc = ctypes.WINFUNCTYPE(
+            ctypes.c_bool,
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int),
+        )
+
+        def _open_proc(pid, access):
+            h = ctypes.windll.kernel32.OpenProcess(access, False, pid)
+            if h and h != INVALID_HANDLE:
+                return h
+            return None
+
+        def _close_h(h):
+            try:
+                if h and h != INVALID_HANDLE:
+                    ctypes.windll.kernel32.CloseHandle(h)
+            except Exception:
+                pass
+
+        def _alive(pid):
+            h = _open_proc(pid, PROCESS_QUERY_LIMITED_INFO | SYNCHRONIZE)
+            if not h:
+                return False
+            ec = ctypes.c_ulong(0)
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(ec))
+            _close_h(h)
+            return bool(ok) and ec.value == STILL_ACTIVE
+
+        def _wait_dead(pid, ms):
+            h = _open_proc(pid, SYNCHRONIZE)
+            if not h:
+                return True
+            ret = ctypes.windll.kernel32.WaitForSingleObject(h, ms)
+            _close_h(h)
+            return ret == 0 or not _alive(pid)
+
+        def _send_close_messages(pid):
+            target_pid = ctypes.c_ulong(pid)
+            def _cb(hwnd, _):
+                try:
+                    owner = ctypes.c_ulong(0)
+                    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                    if owner.value == target_pid.value:
+                        ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+                        ctypes.windll.user32.PostMessageW(hwnd, WM_QUIT,  0, 0)
+                except Exception:
+                    pass
+                return True
+            try:
+                ctypes.windll.user32.EnumWindows(EnumWindowsProc(_cb), None)
+            except Exception:
+                pass
+
+        def _try_terminate_via_ctypes(pid):
+            h = _open_proc(pid, PROCESS_TERMINATE | SYNCHRONIZE)
+            if not h:
+                return False
+            try:
+                ok = ctypes.windll.kernel32.TerminateProcess(h, 1)
+                if ok:
+                    ctypes.windll.kernel32.WaitForSingleObject(h, 3000)
+                    return not _alive(pid)
+            except Exception:
+                pass
+            finally:
+                _close_h(h)
+            return False
+
+        def _try_taskkill(pid, exe):
+            try:
+                r = subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True, text=True, timeout=8, creationflags=NO_WINDOW,
+                )
+                return r.returncode == 0
+            except Exception:
+                return False
+
+        def _try_powershell_stop(pid):
+            try:
+                r = subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive",
+                     "-ExecutionPolicy", "Bypass", "-Command",
+                     "Stop-Process -Id " + str(pid) + " -Force -ErrorAction SilentlyContinue"],
+                    capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW,
+                )
+                time.sleep(0.5)
+                return not _alive(pid)
+            except Exception:
+                return False
+
+        pids = DiscordDetector._get_pids_by_names(names)
+        if not pids:
+            return 0
+
+        killed = 0
+        for pid, exe in pids:
+            if not _alive(pid):
+                killed += 1
                 continue
+
+            _log("[~] Closing " + exe + " (PID " + str(pid) + ")...")
+
+            _send_close_messages(pid)
+            if _wait_dead(pid, 2500):
+                _log("[+] Closed " + exe + " (PID " + str(pid) + ")")
+                killed += 1
+                continue
+
+            if not _alive(pid):
+                _log("[+] Closed " + exe + " (PID " + str(pid) + ")")
+                killed += 1
+                continue
+
+            _log("[~] Terminating " + exe + " (PID " + str(pid) + ")...")
+
+            if _try_terminate_via_ctypes(pid):
+                _log("[+] Terminated " + exe + " (PID " + str(pid) + ")")
+                killed += 1
+                continue
+
+            if _try_taskkill(pid, exe) and not _alive(pid):
+                _log("[+] Force-killed " + exe + " (PID " + str(pid) + ")")
+                killed += 1
+                continue
+
+            if _try_powershell_stop(pid):
+                _log("[+] Stopped " + exe + " (PID " + str(pid) + ")")
+                killed += 1
+                continue
+
+            if not _alive(pid):
+                _log("[+] " + exe + " (PID " + str(pid) + ") exited on its own.")
+                killed += 1
+            else:
+                _log("[!] Could not stop " + exe + " (PID " + str(pid) + ") - may need to be closed manually.")
+
         return killed
 
     @staticmethod
@@ -2524,15 +2987,15 @@ class DiscordDetector:
                     cwd=os.path.dirname(update_exe),
                 )
                 DiscordDetector._detach(proc)
-                return True
+                return proc.pid
             direct_exe = DiscordDetector._find_upwards(target_path, exe_name)
             if direct_exe:
                 proc = subprocess.Popen([direct_exe], cwd=os.path.dirname(direct_exe))
                 DiscordDetector._detach(proc)
-                return True
-            return False
+                return proc.pid
+            return None
         except Exception:
-            return False
+            return None
 
 
 class Api:
@@ -2576,7 +3039,7 @@ class Api:
         self.window = window
 
     def _safe_js(self, js_code):
-        if self._running:
+        if self._running and self.window:
             self._queue.put(js_code)
 
     def _process_queue(self):
@@ -2586,7 +3049,7 @@ class Api:
             except queue.Empty:
                 continue
             with self._js_lock:
-                if not self.window:
+                if not self.window or not self._running:
                     continue
                 try:
                     self.window.evaluate_js(js)
@@ -2598,7 +3061,7 @@ class Api:
             except queue.Empty:
                 break
             with self._js_lock:
-                if not self.window:
+                if not self.window or not self._running:
                     break
                 try:
                     self.window.evaluate_js(js)
@@ -2606,14 +3069,71 @@ class Api:
                     pass
 
     def _log(self, msg):
-        safe = msg.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+        safe = (str(msg)
+                .replace("\\", "\\\\")
+                .replace("`", "\\`")
+                .replace("${", "\\${")
+                .replace("\r\n", " ")
+                .replace("\r", " ")
+                .replace("\n", " "))
         self._safe_js("try{addLog(`" + safe + "`)}catch(e){}")
 
     def _finish(self, ok):
         self._safe_js("try{finishLog(" + ("true" if ok else "false") + ")}catch(e){}")
 
+    @staticmethod
+    def _discord_is_present():
+        local = os.getenv("LOCALAPPDATA", "")
+        roaming = os.getenv("APPDATA", "")
+        pf = os.getenv("ProgramFiles", r"C:\Program Files")
+        pf86 = os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        check_names = ["Discord", "discord", "DiscordPTB", "discordptb", "DiscordCanary", "discordcanary"]
+        for base in [local, roaming, pf, pf86]:
+            if not base:
+                continue
+            for name in check_names:
+                if os.path.isdir(os.path.join(base, name)):
+                    return True
+        try:
+            import winreg
+            for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                for key in (
+                    r"Software\Microsoft\Windows\CurrentVersion\App Paths\Discord.exe",
+                    r"Software\Microsoft\Windows\CurrentVersion\App Paths\DiscordPTB.exe",
+                    r"Software\Microsoft\Windows\CurrentVersion\App Paths\DiscordCanary.exe",
+                ):
+                    try:
+                        with winreg.OpenKey(hive, key) as k:
+                            val, _ = winreg.QueryValueEx(k, "")
+                            if val and os.path.isfile(str(val).strip().strip('"')):
+                                return True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        try:
+            NO_WINDOW = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            r = subprocess.run(
+                ["where", "Discord.exe"],
+                capture_output=True, text=True, timeout=4, creationflags=NO_WINDOW,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return True
+        except Exception:
+            pass
+        return False
+
+    def discord_exists(self):
+        try:
+            return json.dumps({"exists": self._discord_is_present()})
+        except Exception:
+            return json.dumps({"exists": False})
+
     def scan_discord(self):
         try:
+            if not self._discord_is_present():
+                self.installations = []
+                return json.dumps([])
             installs = DiscordDetector.find_installations()
             for inst in installs:
                 try:
@@ -2735,8 +3255,13 @@ class Api:
         try:
             self._running = False
             self._rpc.stop()
-            if self.window:
-                self.window.destroy()
+            win = self.window
+            self.window = None
+            if win:
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -2744,68 +3269,66 @@ class Api:
         if not self._op_lock.acquire(blocking=False):
             return "busy"
         try:
-            try:
-                inst = json.loads(inst_json)
-            except Exception:
-                return "invalid"
-            target = inst.get("path", "")
-            if not target or not os.path.isfile(target):
-                return "invalid"
-            backup = target + ".dcdns.bak"
-            if os.path.exists(backup):
-                self._pending_install = inst
-                return "ask_backup"
-            threading.Thread(target=self._run_install, args=(inst, False), daemon=True).start()
-            return "ok"
+            inst = json.loads(inst_json)
         except Exception:
+            self._op_lock.release()
             return "invalid"
+        target = inst.get("path", "")
+        if not target or not os.path.isfile(target):
+            self._op_lock.release()
+            return "invalid"
+        backup = target + ".dcdns.bak"
+        if os.path.exists(backup):
+            self._pending_install = inst
+            self._op_lock.release()
+            return "ask_backup"
+        threading.Thread(target=self._run_install, args=(inst, False), daemon=True).start()
+        return "ok"
+
+    def install_confirm_backup(self, choice):
+        if not self._op_lock.acquire(blocking=False):
+            return "busy"
+        inst = self._pending_install
+        self._pending_install = None
+        if not inst:
+            self._op_lock.release()
+            return "invalid"
+        overwrite = choice == "overwrite"
+        threading.Thread(target=self._run_install, args=(inst, overwrite), daemon=True).start()
+        return "ok"
+
+    def uninstall(self, inst_json):
+        if not self._op_lock.acquire(blocking=False):
+            return "busy"
+        try:
+            inst = json.loads(inst_json)
+        except Exception:
+            self._op_lock.release()
+            return "invalid"
+        threading.Thread(target=self._run_uninstall, args=(inst,), daemon=True).start()
+        return "ok"
+
+    def restart_discord(self, inst_json):
+        if not self._op_lock.acquire(blocking=False):
+            return "busy"
+        try:
+            inst = json.loads(inst_json)
+        except Exception:
+            self._op_lock.release()
+            return "invalid"
+        threading.Thread(target=self._run_restart, args=(inst,), daemon=True).start()
+        return "ok"
+
+    def _run_install(self, inst, overwrite_backup):
+        try:
+            self._do_install(inst, overwrite_backup)
         finally:
             try:
                 self._op_lock.release()
             except RuntimeError:
                 pass
 
-    def install_confirm_backup(self, choice):
-        if not self._op_lock.acquire(blocking=False):
-            return "busy"
-        try:
-            inst = self._pending_install
-            self._pending_install = None
-            if not inst:
-                return "invalid"
-            overwrite = choice == "overwrite"
-            threading.Thread(target=self._run_install, args=(inst, overwrite), daemon=True).start()
-            return "ok"
-        finally:
-            self._op_lock.release()
-
-    def uninstall(self, inst_json):
-        if not self._op_lock.acquire(blocking=False):
-            return "busy"
-        try:
-            try:
-                inst = json.loads(inst_json)
-            except Exception:
-                return "invalid"
-            threading.Thread(target=self._run_uninstall, args=(inst,), daemon=True).start()
-            return "ok"
-        finally:
-            self._op_lock.release()
-
-    def restart_discord(self, inst_json):
-        if not self._op_lock.acquire(blocking=False):
-            return "busy"
-        try:
-            try:
-                inst = json.loads(inst_json)
-            except Exception:
-                return "invalid"
-            threading.Thread(target=self._run_restart, args=(inst,), daemon=True).start()
-            return "ok"
-        finally:
-            self._op_lock.release()
-
-    def _run_install(self, inst, overwrite_backup):
+    def _do_install(self, inst, overwrite_backup):
         target   = inst.get("path", "")
         flavor   = inst.get("flavor", "DISCORD")
         settings = inst.get("settings", {})
@@ -2818,12 +3341,17 @@ class Api:
             if not os.path.isfile(target):
                 self._log("[X] Target file not found: " + target)
                 self._finish(False); return
+            valid, reason = DiscordDetector.is_valid_discord_target(target)
+            if not valid:
+                self._log("[X] Tamper / sanity check failed: " + reason)
+                self._finish(False); return
+            self._log("[+] Target validated: " + os.path.basename(target))
 
             self._log("[2/7] Closing running Discord processes...")
             names  = PROCESS_NAMES.get(flavor, PROCESS_NAMES["DISCORD"])
-            killed = DiscordDetector.kill_processes(names)
+            killed = DiscordDetector.kill_processes(names, log_fn=self._log)
             if killed:
-                self._log("[+] Closed " + str(killed) + " matching process(es).")
+                self._log("[+] Closed " + str(killed) + " process(es) total.")
                 time.sleep(1.5)
             else:
                 self._log("[!] No running process detected.")
@@ -2833,8 +3361,51 @@ class Api:
 
             self._log("[4/7] Checking for existing payload...")
             if PAYLOAD_MARKER in content:
-                self._log("[!] Existing DcDNS payload detected - stripping before reinstall...")
-                content = DiscordDetector.strip_payload(content)
+                injected_ver = DiscordDetector.get_injected_version(target)
+                if injected_ver and DiscordDetector._version_key(injected_ver) >= DiscordDetector._version_key(APP_VERSION):
+                    self._log("[!] DcDNS v" + injected_ver + " already installed and up to date - reinstalling anyway...")
+                elif injected_ver:
+                    self._log("[!] Outdated DcDNS v" + injected_ver + " detected - upgrading to v" + APP_VERSION + "...")
+                else:
+                    self._log("[!] Existing DcDNS payload detected - replacing...")
+
+                bak_try = target + ".dcdns.bak"
+                clean_content = None
+
+                if os.path.isfile(bak_try):
+                    try:
+                        bak_content = DiscordDetector.read_text(bak_try)
+                        if PAYLOAD_MARKER not in bak_content and bak_content.strip():
+                            clean_content = bak_content
+                            self._log("[+] Using backup as clean base.")
+                        elif PAYLOAD_MARKER in bak_content:
+                            self._log("[!] Backup is also injected - attempting to strip backup...")
+                            stripped_bak, strip_bak_reason = DiscordDetector.strip_payload_safe(bak_content)
+                            if stripped_bak is not None:
+                                clean_content = stripped_bak
+                                self._log("[+] Backup stripped successfully - using as clean base.")
+                            else:
+                                self._log("[!] Could not strip backup (" + strip_bak_reason + ") - will strip from live file.")
+                        else:
+                            self._log("[!] Backup appears invalid - will strip from file directly.")
+                    except Exception as bak_ex:
+                        self._log("[!] Could not read backup: " + str(bak_ex))
+
+                if clean_content is None:
+                    stripped, strip_reason = DiscordDetector.strip_payload_safe(content)
+                    if stripped is not None:
+                        clean_content = stripped
+                        self._log("[+] Payload stripped from live file successfully.")
+                    else:
+                        self._log("[X] Strip failed: " + strip_reason)
+                        self._log("[X] No clean source available - aborting to protect your installation.")
+                        self._finish(False); return
+
+                content = clean_content
+                if PAYLOAD_MARKER in content:
+                    self._log("[X] Payload marker still present after cleanup - aborting.")
+                    self._finish(False); return
+                self._log("[+] Base file is clean - ready for injection.")
 
             self._log("[5/7] Creating backup...")
             bak_sha_file = backup + ".sha256"
@@ -2896,8 +3467,9 @@ class Api:
                 self._log("[+] SHA-256: " + sha256)
 
             self._log("[+] Launching Discord...")
-            if DiscordDetector.launch_client(target, flavor):
-                self._log("[+] Discord launched.")
+            launched_pid = DiscordDetector.launch_client(target, flavor)
+            if launched_pid:
+                self._log("[+] Discord launched (launcher PID " + str(launched_pid) + ").")
             else:
                 self._log("[!] Could not auto-launch. Start Discord manually.")
 
@@ -2913,6 +3485,15 @@ class Api:
             self._finish(False)
 
     def _run_uninstall(self, inst):
+        try:
+            self._do_uninstall(inst)
+        finally:
+            try:
+                self._op_lock.release()
+            except RuntimeError:
+                pass
+
+    def _do_uninstall(self, inst):
         target = inst.get("path", "")
         flavor = inst.get("flavor", "DISCORD")
         backup = target + ".dcdns.bak"
@@ -2922,9 +3503,9 @@ class Api:
         try:
             self._log("[1/6] Closing running Discord processes...")
             names  = PROCESS_NAMES.get(flavor, PROCESS_NAMES["DISCORD"])
-            killed = DiscordDetector.kill_processes(names)
+            killed = DiscordDetector.kill_processes(names, log_fn=self._log)
             if killed:
-                self._log("[+] Closed " + str(killed) + " matching process(es).")
+                self._log("[+] Closed " + str(killed) + " process(es) total.")
                 time.sleep(1.0)
             else:
                 self._log("[!] No running process detected.")
@@ -2971,9 +3552,19 @@ class Api:
                 if not os.path.isfile(target):
                     self._log("[X] Target file not found.")
                     self._finish(False); return
+                valid, reason = DiscordDetector.is_valid_discord_target(target)
+                if not valid:
+                    self._log("[X] Tamper / sanity check failed: " + reason)
+                    self._finish(False); return
                 content = DiscordDetector.read_text(target)
                 if PAYLOAD_MARKER in content:
-                    cleaned = DiscordDetector.strip_payload(content)
+                    cleaned, strip_reason = DiscordDetector.strip_payload_safe(content)
+                    if cleaned is None:
+                        self._log("[X] Strip failed: " + strip_reason)
+                        self._finish(False); return
+                    if PAYLOAD_MARKER in cleaned:
+                        self._log("[X] Payload marker still present after strip - aborting.")
+                        self._finish(False); return
                     for attempt in range(5):
                         try:
                             DiscordDetector.write_text(target, cleaned)
@@ -2991,8 +3582,9 @@ class Api:
             self._log("[4/6] Verifying...")
             if not DiscordDetector._is_injected(target):
                 self._log("[5/6] Launching Discord...")
-                if DiscordDetector.launch_client(target, flavor):
-                    self._log("[+] Discord launched.")
+                launched_pid = DiscordDetector.launch_client(target, flavor)
+                if launched_pid:
+                    self._log("[+] Discord launched (launcher PID " + str(launched_pid) + ").")
                 else:
                     self._log("[!] Could not auto-launch. Start Discord manually.")
                 self._log("[6/6] Done.")
@@ -3011,6 +3603,15 @@ class Api:
             self._finish(False)
 
     def _run_restart(self, inst):
+        try:
+            self._do_restart(inst)
+        finally:
+            try:
+                self._op_lock.release()
+            except RuntimeError:
+                pass
+
+    def _do_restart(self, inst):
         target = inst.get("path", "")
         flavor = inst.get("flavor", "DISCORD")
         self._log("=" * 40)
@@ -3019,18 +3620,18 @@ class Api:
         try:
             names = PROCESS_NAMES.get(flavor, PROCESS_NAMES["DISCORD"])
             self._log("[1/3] Closing running instances...")
-            killed = DiscordDetector.kill_processes(names)
+            killed = DiscordDetector.kill_processes(names, log_fn=self._log)
             if killed:
-                self._log("[+] Closed " + str(killed) + " matching process(es).")
+                self._log("[+] Closed " + str(killed) + " process(es) total.")
             else:
                 self._log("[!] No running process detected (already closed).")
             time.sleep(1.5)
             self._log("[2/3] Launching client...")
-            launched = False
+            launched_pid = None
             if target and os.path.isfile(target):
-                launched = DiscordDetector.launch_client(target, flavor)
-            if launched:
-                self._log("[3/3] Launch command sent.")
+                launched_pid = DiscordDetector.launch_client(target, flavor)
+            if launched_pid:
+                self._log("[+] Discord launched (launcher PID " + str(launched_pid) + ").")
                 self._log("=" * 40)
                 self._log("RESTART COMPLETE!")
                 self._log("=" * 40)
