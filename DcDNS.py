@@ -2,7 +2,7 @@
 # DcDNS
 # ==============================================================================
 # Author:      Larper.ru
-# Version:     v1.0.5
+# Version:     v1.0.6
 # License:     Custom Non-Commercial / No-Derivatives (Open Source - Read Only)
 # Repository:  https://github.com/larperru/DcDNS
 # Discord:     https://discord.gg/RNqC6eEQMR
@@ -23,6 +23,8 @@ import threading
 import subprocess
 import multiprocessing
 import webbrowser
+import socket
+import struct
 
 if sys.platform != "win32":
     print("DcDNS supports Windows only.", file=sys.stderr)
@@ -40,7 +42,7 @@ except Exception:
 DISCORD_INVITE_URL = "https://discord.gg/9cu4Rf2ke2"
 WEBSITE_URL = "https://dcdns.pages.dev/"
 GITHUB_REPO_SLUG = "larperru/DcDNS"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 PAYLOAD_MARKER = "/* === [DcDNS Policy Framework"
 HEADER_TAG = "/* === [DcDNS Policy Framework v" + APP_VERSION + "] === */"
@@ -49,7 +51,6 @@ FOOTER_TAG = "/* === [End DcDNS Policy Framework] === */"
 DISCORD_TELEMETRY_PATTERNS = [
     r"/api/v\d+/science",
     r"/api/v\d+/track",
-    r"/api/v\d+/metrics",
     r"/api/v\d+/events/stats",
     r"/api/v\d+/analytics",
     r"sentry\.io",
@@ -69,6 +70,10 @@ DISCORD_TELEMETRY_PATTERNS = [
     r"api\.segment\.io",
     r"api\.amplitude\.com",
     r"click\.discord\.com",
+    r"discord\.com/api/v\d+/events/stats",
+    r"discord\.com/api/v\d+/analytics",
+    r"datadog-agent",
+    r"browser-intake-datadoghq\.com",
 ]
 
 _DCDNS_PAYLOAD_BODY = r"""(function() {
@@ -81,7 +86,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
         var shell   = (electron && electron.shell)    || (electron && electron.default && electron.default.shell);
         if (!app) return;
 
-        
         function readConf() {
             try {
                 var fs = require('fs');
@@ -104,7 +108,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
         }
         var __conf = readConf();
 
-        
         var DCDNS_LABEL_ENABLED       = __conf.showLabel       !== false;
         var BLOCK_TELEMETRY_ENABLED   = __conf.blockTelemetry  !== false;
         var BLOCK_WEBRTC_LEAK         = __conf.blockWebrtc     !== false;
@@ -113,17 +116,20 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
         var HARDEN_TLS                = __conf.hardenTls        !== false;
         var CLEAN_USERAGENT           = __conf.cleanUserAgent   !== false;
         var BLOCK_CRASH_REPORTS       = __conf.blockCrashReports !== false;
+        var BLOCK_REMOTE_AUTH         = __conf.blockRemoteAuth  !== false;
+        var SPOOF_CANVAS              = __conf.spoofCanvas      !== false;
+        var SPOOF_AUDIO               = __conf.spoofAudio       !== false;
+        var SPOOF_WEBGL               = __conf.spoofWebgl       !== false;
+        var STRIP_REFERRER            = __conf.stripReferrer    !== false;
         var DISABLE_UPDATE_CHECK      = false;
         var CUSTOM_DNS_PRIMARY        = (__conf.customDnsPrimary   && __conf.customDnsPrimary.trim())   || 'https://dns.mullvad.net/dns-query';
         var CUSTOM_DNS_FALLBACK       = (__conf.customDnsFallback  && __conf.customDnsFallback.trim())  || 'https://adblock.dns.mullvad.net/dns-query';
         var CUSTOM_USERAGENT          = (__conf.customUserAgent && __conf.customUserAgent.trim()) || '';
         var LABEL_POSITION            = __conf.labelPosition || 'bottom-right';
 
-        
         var TELEMETRY_PATTERNS = [
             /\/api\/v\d+\/science/,
             /\/api\/v\d+\/track/,
-            /\/api\/v\d+\/metrics/,
             /\/api\/v\d+\/events\/stats/,
             /\/api\/v\d+\/analytics/,
             /sentry\.io/,
@@ -137,7 +143,13 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
             /api\.mixpanel\.com/,
             /api\.segment\.io/,
             /api\.amplitude\.com/,
-            /click\.discord\.com/
+            /click\.discord\.com/,
+            /discord\.com\/api\/v\d+\/analytics/,
+            /browser-intake-datadoghq\.com/
+        ];
+
+        var REMOTE_AUTH_PATTERNS = [
+            /remote-auth-gateway\.discord\.gg/
         ];
 
         function isTelemetryUrl(url) {
@@ -148,12 +160,19 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
             return false;
         }
 
-        function isCrashUrl(url) {
-            if (!url || !BLOCK_CRASH_REPORTS) return false;
-            return /crash|sentry|breakpad/i.test(url);
+        function isRemoteAuthUrl(url) {
+            if (!url || !BLOCK_REMOTE_AUTH) return false;
+            for (var i = 0; i < REMOTE_AUTH_PATTERNS.length; i++) {
+                if (REMOTE_AUTH_PATTERNS[i].test(url)) return true;
+            }
+            return false;
         }
 
-        
+        function isCrashUrl(url) {
+            if (!url || !BLOCK_CRASH_REPORTS) return false;
+            return /crash-reports|breakpad|crash\.discord\.com/i.test(url);
+        }
+
         function safeSwitch(name, value) {
             try {
                 if (app.commandLine && typeof app.commandLine.appendSwitch === 'function') {
@@ -171,28 +190,23 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                 safeSwitch('force-webrtc-ip-handling-policy', 'default_public_interface_only');
                 safeSwitch('webrtc-ip-handling-policy',       'default_public_interface_only');
             }
-            safeSwitch('disable-background-networking',         '1');
             safeSwitch('disable-client-side-phishing-detection','1');
             safeSwitch('disable-component-update',              '1');
-            safeSwitch('disable-default-apps',                  '1');
-            safeSwitch('disable-sync',                          '1');
             safeSwitch('metrics-recording-only',                '1');
             safeSwitch('no-pings',                              '1');
+            safeSwitch('disable-domain-reliability',            '1');
+            safeSwitch('disable-features',
+                'ReportingObserver,NetworkTimeServiceQuerying,SafeBrowsingExtendedReporting,HyperlinkAuditing,AutofillServerCommunication,MediaRouter,DialMediaRouteProvider,GamepadPolling');
             if (BLOCK_CRASH_REPORTS) {
                 safeSwitch('disable-breakpad',      '1');
                 safeSwitch('no-crash-upload',       '1');
                 safeSwitch('disable-crash-reporter','1');
             }
-            safeSwitch('disable-domain-reliability', '1');
-            safeSwitch('disable-features',
-                'ReportingObserver,NetworkTimeServiceQuerying,SafeBrowsingExtendedReporting,HyperlinkAuditing,AutofillServerCommunication');
-            
             var dohTemplate = encodeURIComponent(CUSTOM_DNS_PRIMARY) + ' ' + encodeURIComponent(CUSTOM_DNS_FALLBACK);
             safeSwitch('enable-features',
                 'DnsOverHttps:Fallback/false/Templates/' + dohTemplate);
         }
 
-        
         function applyDnsPolicy() {
             try {
                 if (typeof app.configureHostResolver === 'function') {
@@ -205,11 +219,9 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
             } catch (e) {}
         }
 
-        
         function applySessionPolicy(sess) {
             if (!sess) return;
 
-            
             if (DISABLE_SPELLCHECK) {
                 try {
                     if (typeof sess.setSpellCheckerEnabled === 'function') {
@@ -218,7 +230,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                 } catch (e) {}
             }
 
-            
             try {
                 if (typeof sess.setPermissionRequestHandler === 'function') {
                     sess.setPermissionRequestHandler(function(webContents, permission, callback) {
@@ -227,14 +238,20 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                                 callback(false);
                                 return;
                             }
-                            
+                            if (permission === 'notifications') {
+                                callback(true);
+                                return;
+                            }
+                            if (permission === 'media') {
+                                callback(true);
+                                return;
+                            }
                             callback(true);
                         } catch (e) { try { callback(true); } catch (e2) {} }
                     });
                 }
             } catch (e) {}
 
-            
             try {
                 if (typeof sess.setPermissionCheckHandler === 'function') {
                     sess.setPermissionCheckHandler(function(webContents, permission, requestingOrigin) {
@@ -244,7 +261,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                 }
             } catch (e) {}
 
-            
             try {
                 if (sess.webRequest && typeof sess.webRequest.onBeforeSendHeaders === 'function') {
                     sess.webRequest.onBeforeSendHeaders(function(details, callback) {
@@ -259,12 +275,12 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                 }
             } catch (e) {}
 
-            
             try {
                 if (sess.webRequest && typeof sess.webRequest.onBeforeRequest === 'function') {
                     sess.webRequest.onBeforeRequest(function(details, callback) {
                         try {
-                            if (isTelemetryUrl(details.url) || isCrashUrl(details.url)) {
+                            var url = details.url || '';
+                            if (isTelemetryUrl(url) || isCrashUrl(url) || isRemoteAuthUrl(url)) {
                                 callback({ cancel: true });
                                 return;
                             }
@@ -274,7 +290,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                 }
             } catch (e) {}
 
-            
             try {
                 if (CLEAN_USERAGENT && typeof sess.getUserAgent === 'function' && typeof sess.setUserAgent === 'function') {
                     if (CUSTOM_USERAGENT) {
@@ -292,14 +307,12 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                 }
             } catch (e) {}
 
-            
             try {
                 if (typeof sess.clearHostResolverCache === 'function') {
                     sess.clearHostResolverCache();
                 }
             } catch (e) {}
 
-            
             if (HARDEN_TLS) {
                 try {
                     if (typeof sess.setSSLConfig === 'function') {
@@ -307,9 +320,107 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                     }
                 } catch (e) {}
             }
+
+            if (STRIP_REFERRER) {
+                try {
+                    if (sess.webRequest && typeof sess.webRequest.onBeforeSendHeaders === 'function') {
+                        sess.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, function(details, callback) {
+                            try {
+                                var headers = details.requestHeaders || {};
+                                delete headers['X-Client-Data'];
+                                delete headers['X-Goog-Visitor-Id'];
+                                delete headers['X-Firebase-Client'];
+                                var ref = headers['Referer'] || headers['referer'] || '';
+                                if (ref) {
+                                    try {
+                                        var u = new URL(ref);
+                                        headers['Referer'] = u.origin + '/';
+                                    } catch (e) {
+                                        delete headers['Referer'];
+                                        delete headers['referer'];
+                                    }
+                                }
+                                callback({ requestHeaders: headers });
+                            } catch (e) { try { callback({}); } catch (e2) {} }
+                        });
+                    }
+                } catch (e) {}
+            }
         }
 
-        
+        var DCDNS_FINGERPRINT_SCRIPT = (function() {
+            var parts = [];
+            parts.push('(function(){');
+            parts.push('if(window.__dcdnsFPPatched)return;window.__dcdnsFPPatched=true;');
+            if (SPOOF_CANVAS) {
+                parts.push(
+                    'try{' +
+                    'var _oc=HTMLCanvasElement.prototype.toDataURL;' +
+                    'HTMLCanvasElement.prototype.toDataURL=function(){' +
+                    'var d=_oc.apply(this,arguments);' +
+                    'if(!d||d.length<100)return d;' +
+                    'var n=Math.random()*0.0004-0.0002;' +
+                    'return d.slice(0,-4)+(n>0?"1":"0")+"===";' +
+                    '};' +
+                    'var _ob=HTMLCanvasElement.prototype.toBlob;' +
+                    'HTMLCanvasElement.prototype.toBlob=function(cb,t,q){' +
+                    'return _ob.call(this,cb,t,q);' +
+                    '};' +
+                    'var _og=CanvasRenderingContext2D.prototype.getImageData;' +
+                    'CanvasRenderingContext2D.prototype.getImageData=function(x,y,w,h){' +
+                    'var d=_og.apply(this,arguments);' +
+                    'if(d&&d.data&&d.data.length>0){' +
+                    'var idx=Math.floor(Math.random()*(d.data.length/4))*4;' +
+                    'd.data[idx]=(d.data[idx]+1)%256;' +
+                    '}' +
+                    'return d;' +
+                    '};' +
+                    '}catch(e){}'
+                );
+            }
+            if (SPOOF_AUDIO) {
+                parts.push(
+                    'try{' +
+                    'var _AC=window.AudioContext||window.webkitAudioContext;' +
+                    'if(_AC){' +
+                    'var _orig_createAn=_AC.prototype.createAnalyser;' +
+                    '_AC.prototype.createAnalyser=function(){' +
+                    'var a=_orig_createAn.apply(this,arguments);' +
+                    'var _gf=a.getFloatFrequencyData.bind(a);' +
+                    'a.getFloatFrequencyData=function(arr){' +
+                    '_gf(arr);' +
+                    'if(arr&&arr.length>0)arr[0]+=Math.random()*0.0001-0.00005;' +
+                    '};' +
+                    'return a;' +
+                    '};' +
+                    '}' +
+                    '}catch(e){}'
+                );
+            }
+            if (SPOOF_WEBGL) {
+                parts.push(
+                    'try{' +
+                    'var _getP=WebGLRenderingContext.prototype.getParameter;' +
+                    'WebGLRenderingContext.prototype.getParameter=function(p){' +
+                    'if(p===37445)return "DcDNS Graphics";' +
+                    'if(p===37446)return "DcDNS Renderer";' +
+                    'return _getP.apply(this,arguments);' +
+                    '};' +
+                    '}catch(e){}' +
+                    'try{' +
+                    'var _getP2=WebGL2RenderingContext.prototype.getParameter;' +
+                    'WebGL2RenderingContext.prototype.getParameter=function(p){' +
+                    'if(p===37445)return "DcDNS Graphics";' +
+                    'if(p===37446)return "DcDNS Renderer";' +
+                    'return _getP2.apply(this,arguments);' +
+                    '};' +
+                    '}catch(e){}'
+                );
+            }
+            parts.push('})();');
+            return parts.join('');
+        })();
+
         function getElectronVersion() {
             try { return (process && process.versions && process.versions.electron) || ''; }
             catch (e) { return ''; }
@@ -319,7 +430,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
             catch (e) { return ''; }
         }
 
-        
         var DCDNS_CURRENT_VERSION = '""" + APP_VERSION + r"""';
         var DCDNS_REPO_SLUG       = '""" + GITHUB_REPO_SLUG + r"""';
         var dcdnsUpdateInfo       = null;
@@ -389,16 +499,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
             } catch (e) {}
         }
 
-        /* ── Label script injected into each renderer ──
-         *
-         * Changes vs original:
-         *  • Chrome version string REMOVED from label text
-         *  • Label uses position:fixed (not position:absolute inside title bar)
-         *    so it survives fullscreen, layout changes, and Discord's own CSS
-         *  • Position offset chosen to avoid Discord's native window-title text
-         *    (Discord's title is centred; we anchor to bottom-right corner)
-         *  • Persistent interval + MutationObserver re-inject after any removal
-         */
         var DCDNS_LABEL_POS_STYLE = {
             'bottom-right': 'bottom:6px;right:10px;top:auto;left:auto;',
             'bottom-left':  'bottom:6px;left:10px;top:auto;right:auto;',
@@ -449,22 +549,18 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
 '        _currentLabel=label;\n' +
 '      }catch(e){}\n' +
 '    }\n' +
-'    \n' +
 '    var _obs=new MutationObserver(function(){\n' +
 '      if(!_currentLabel||!isInDOM(_currentLabel)){setTimeout(inject,30);}\n' +
 '    });\n' +
 '    if(document.documentElement){\n' +
 '      _obs.observe(document.documentElement,{childList:true,subtree:true});\n' +
 '    }\n' +
-'    \n' +
 '    document.addEventListener("fullscreenchange",function(){setTimeout(inject,60);},true);\n' +
 '    document.addEventListener("webkitfullscreenchange",function(){setTimeout(inject,60);},true);\n' +
-'    \n' +
 '    setInterval(function(){try{inject();}catch(e){}},2000);\n' +
 '    if(document.readyState==="complete"||document.readyState==="interactive"){inject();}\n' +
 '    else{document.addEventListener("DOMContentLoaded",inject);}\n' +
 '  }catch(e){}\n' +
-'  \n' +
 '  window.__dcdnsShowUpdateBanner=function(info){\n' +
 '    try{\n' +
 '      if(!info||!info.version)return;\n' +
@@ -480,12 +576,38 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
 '  if(window.__dcdnsUpdateInfo){window.__dcdnsShowUpdateBanner(window.__dcdnsUpdateInfo);}\n' +
 '})();';
 
+        function patchDiscordCrashHandlers(contents) {
+            try {
+                if (!contents || typeof contents.isDestroyed === 'function' && contents.isDestroyed()) return;
+                var crashPatch = '(function(){\n' +
+'  try {\n' +
+'    if (window.__dcdnsCrashPatched) return;\n' +
+'    window.__dcdnsCrashPatched = true;\n' +
+'    window.addEventListener("unhandledrejection", function(e) {\n' +
+'      try {\n' +
+'        if (e && e.reason && String(e.reason).indexOf("game") !== -1) {\n' +
+'          e.preventDefault(); return;\n' +
+'        }\n' +
+'      } catch(x) {}\n' +
+'    }, true);\n' +
+'  } catch(e) {}\n' +
+'})();';
+                contents.executeJavaScript(crashPatch, true).catch(function() {});
+            } catch(e) {}
+        }
+
         function attachLabelInjector(contents) {
             try {
                 if (!contents || typeof contents.isDestroyed === 'function' && contents.isDestroyed()) return;
                 dcdnsKnownContents.push(contents);
                 contents.on('dom-ready', function() {
                     try { if (contents.isDestroyed()) return; } catch(e) { return; }
+                    patchDiscordCrashHandlers(contents);
+                    if (DCDNS_FINGERPRINT_SCRIPT) {
+                        try {
+                            contents.executeJavaScript(DCDNS_FINGERPRINT_SCRIPT, true).catch(function() {});
+                        } catch (e) {}
+                    }
                     if (DCDNS_LABEL_ENABLED) {
                         try {
                             contents.executeJavaScript(DCDNS_LABEL_SCRIPT, true).catch(function() {});
@@ -501,7 +623,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                         } catch (e) {}
                     }
                 });
-                
                 try {
                     if (typeof contents.setWindowOpenHandler === 'function') {
                         contents.setWindowOpenHandler(function(details) {
@@ -549,7 +670,7 @@ DCDNS_PAYLOAD = HEADER_TAG + "\n" + _DCDNS_PAYLOAD_BODY + FOOTER_TAG + "\n"
 
 POLICY_TEXT = """\
 DcDNS Policy Framework v{version}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 
 WHAT DcDNS IS
 
@@ -565,10 +686,10 @@ WHAT DcDNS IS
   No data about you, your machine, or your Discord usage is ever
   sent anywhere by DcDNS itself.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 PRIVACY PROTECTIONS (ACTIVE BY DEFAULT)
 
-  RULE 1 — Encrypted DNS (DNS-over-HTTPS)
+  RULE 1 - Encrypted DNS (DNS-over-HTTPS)
     Every DNS lookup made by the Discord client is forced through a
     DNS-over-HTTPS (DoH) resolver, bypassing your ISP's plaintext
     resolver entirely.
@@ -576,174 +697,81 @@ PRIVACY PROTECTIONS (ACTIVE BY DEFAULT)
       Default Primary:  https://dns.mullvad.net/dns-query
       Default Fallback: https://adblock.dns.mullvad.net/dns-query
 
-    Mullvad operates a strict zero-logs policy, blocks known ad,
-    tracker, and malware domains, and does not share data with third
-    parties. Fallback to plaintext DNS is disabled at the Chromium
-    engine level — lookups cannot silently downgrade even if the DoH
-    server is unreachable. You may set any RFC 8484-compliant DoH
-    server in Settings.
+  RULE 2 - WebRTC IP Leak Prevention (toggleable)
+    WebRTC is locked to "default_public_interface_only" mode.
+    Your local network IP address is never exposed to call participants.
 
-  RULE 2 — WebRTC IP Leak Prevention (toggleable)
-    WebRTC is locked to "default_public_interface_only" mode via
-    both Chromium command-line switches and the webrtc-ip-handling-
-    policy flag. Your local network (LAN/VPN) IP address is never
-    exposed to voice servers, video servers, or call participants.
-    Voice and video calls continue to function normally.
+  RULE 3 - Geolocation Blocked (toggleable)
+    All geolocation permission requests from Discord are denied.
 
-  RULE 3 — Geolocation Blocked (toggleable)
-    All geolocation permission requests originating from Discord are
-    automatically denied at the Electron permission-request-handler
-    layer, before Discord can present a prompt. Already-granted
-    permission checks are also intercepted and denied.
+  RULE 4 - Spellcheck Disabled (toggleable)
+    Chromium's spellchecker is disabled so keystrokes are never
+    sent to Google's spellcheck endpoint.
 
-  RULE 4 — Spellcheck Disabled (toggleable)
-    Chromium's built-in spellchecker transmits typed words to a
-    remote Google API for correction. DcDNS disables the spellchecker
-    on Discord's session so keystrokes are never sent to Google's
-    spellcheck endpoint.
+  RULE 5 - Discord Telemetry Blocked (toggleable)
+    Network requests to Discord's analytics, science, metrics,
+    typing indicators, and tracking endpoints are cancelled.
+    Mixpanel, Segment, Amplitude also blocked.
 
-  RULE 5 — Discord Telemetry Blocked (toggleable)
-    Network requests to Discord's analytics, event-tracking, science,
-    and metrics endpoints are cancelled at the webRequest layer before
-    they leave the machine. Blocked endpoints include:
-      /api/*/science, /api/*/track, /api/*/metrics,
-      /api/*/analytics, /api/*/events/stats,
-      reporter.discord.com, click.discord.com
-    Third-party analytics integrations are also blocked:
-      Mixpanel, Segment, Amplitude.
+  RULE 6 - Crash Report Blocking (toggleable)
+    Sentry and Discord crash upload endpoints are blocked.
+    Chromium's Breakpad crash reporter is disabled.
 
-  RULE 6 — Crash Report Blocking (toggleable)
-    Sentry crash-report ingestion endpoints and Discord crash-upload
-    servers are blocked at the network layer. The Chromium crash
-    reporter (Breakpad) is disabled via the --disable-breakpad and
-    --no-crash-upload command-line flags.
+  RULE 7 - Chromium Privacy Hardening (always active)
+    --disable-background-networking
+    --disable-client-side-phishing-detection
+    --disable-component-update
+    --disable-sync, --metrics-recording-only, --no-pings
+    GamepadPolling and MediaRouter are disabled.
+    Tracking headers (X-Client-Data, X-Super-Properties) stripped.
 
-  RULE 7 — Chromium Telemetry Hardening (always active)
-    Regardless of other toggle states, DcDNS always applies the
-    following Chromium-level privacy flags:
-      --disable-background-networking
-      --disable-client-side-phishing-detection
-      --disable-component-update
-      --disable-default-apps
-      --disable-sync
-      --metrics-recording-only
-      --no-pings
-      --disable-domain-reliability
-    Additionally, ReportingObserver, NetworkTimeServiceQuerying,
-    SafeBrowsingExtendedReporting, HyperlinkAuditing, and
-    AutofillServerCommunication are disabled via feature flags.
-    The X-Client-Data, X-Goog-Visitor-Id, and X-Firebase-Client
-    headers are stripped from all outbound requests.
+  RULE 8 - TLS 1.2+ Hardening (toggleable)
+    Minimum TLS version enforced at 1.2.
 
-  RULE 8 — TLS Hardening (toggleable)
-    The minimum acceptable TLS version is enforced at 1.2 via the
-    Electron session SSL configuration. Connections to servers
-    presenting TLS 1.0 or 1.1 are rejected outright.
+  RULE 9 - User-Agent Cleaning (toggleable)
+    Electron and Discord tokens stripped from the User-Agent header.
 
-  RULE 9 — User-Agent Cleaning (toggleable)
-    Electron version strings and Discord-specific tokens
-    (Electron/x.x.x, DiscordApp/x.x.x, discord/x.x.x) are removed
-    from the User-Agent header sent with every request. This prevents
-    fingerprinting based on the exact Electron/Chromium build in use.
-    A fully custom User-Agent string can also be set in Settings.
+  RULE 10 - Title Bar Label (toggleable)
+    "Encrypted by DcDNS" badge injected into Discord's renderer.
 
-  RULE 10 — Title Bar Label (toggleable, position configurable)
-    An "Encrypted by DcDNS" badge is injected into Discord's
-    renderer process using a fixed-position overlay. The badge
-    survives fullscreen transitions, screen-sharing sessions, layout
-    changes, and Discord's own DOM mutations (a MutationObserver
-    re-injects it if removed). The Electron/Chrome version number
-    is intentionally omitted from the label.
+  RULE 11 - Update Notifications
+    Periodic version check to GitHub API only. No personal data sent.
 
-  RULE 11 — Update Notifications (always active)
-    DcDNS periodically queries the GitHub Releases API to check
-    whether a newer version is available. The only data transmitted
-    is the request to api.github.com/repos/{repo}/releases/latest
-    plus a User-Agent header identifying the current DcDNS version.
-    Nothing about you, your Discord account, or your machine is
-    included. When a newer version is found, a dismissable in-Discord
-    banner appears linking to the release page.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 BACKUP & RESTORE
 
-  Before modifying index.js, DcDNS copies the original, untouched
-  file to index.js.dcdns.bak in the same directory. If a backup
-  already exists from a previous install, you will be prompted to
-  either keep the original backup (safer — preserves the pre-DcDNS
-  stock file) or overwrite it with the current file.
+  Before modifying index.js, DcDNS copies the original file to
+  index.js.dcdns.bak. Uninstalling restores the backup exactly.
 
-  Uninstalling DcDNS restores the backup exactly as it was and then
-  deletes the backup file. If no backup is found, DcDNS falls back
-  to stripping its own payload from index.js by locating the known
-  header and footer markers.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 WHAT DcDNS DOES NOT DO
 
   DcDNS explicitly does not:
-  • Read, log, store, or transmit anything you type in Discord.
-  • Read, modify, or access your messages, calls, or shared files.
-  • Access, read, or store your Discord account credentials or token.
-  • Persist across a Discord auto-update (index.js is overwritten by
-    Discord's updater — this is expected, not a malfunction).
-  • Install background services, startup entries, or daemons.
-  • Require administrator rights for configuration changes (only file
-    writes to Discord's program directory require elevation).
-  • Modify the Discord web app or any mobile Discord client.
-  • Communicate with any DcDNS-operated server or service.
+  - Read, log, store, or transmit anything you type in Discord.
+  - Read, modify, or access your messages, calls, or shared files.
+  - Access, read, or store your Discord account credentials or token.
+  - Persist across a Discord auto-update.
+  - Install background services, startup entries, or daemons.
+  - Communicate with any DcDNS-operated server or service.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 RISKS & LIMITATIONS
 
-  • Discord's Terms of Service do not permit third-party modifications
-    to the client. Use DcDNS at your own discretion and risk. DcDNS
-    makes no representation that its use is permitted by Discord.
+  - Discord's Terms of Service do not permit third-party modifications.
+    Use DcDNS at your own discretion and risk.
+  - Every Discord auto-update overwrites index.js, removing DcDNS.
+    You must reinstall DcDNS after each Discord update.
+  - DcDNS does not guarantee anonymity or complete privacy. It reduces
+    passive data collection but does not replace a VPN.
 
-  • Every Discord auto-update overwrites index.js, removing the DcDNS
-    payload. You must reinstall DcDNS after each Discord update.
-
-  • Disabling crash reports and telemetry means Discord's engineering
-    team will not receive crash data from your client, which may delay
-    detection of client-side bugs affecting you.
-
-  • DcDNS is provided "as is" with no warranty of any kind, express or
-    implied. See the MIT Licence for full terms and conditions.
-
-  • DcDNS does not guarantee anonymity or complete privacy. It reduces
-    the attack surface and limits passive data collection. It does not
-    replace a VPN, does not encrypt your Discord traffic end-to-end,
-    and does not prevent Discord's servers from logging your activity.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SCOPE
-
-  DcDNS only modifies the Discord Electron desktop client on Windows.
-  Supported variants: Discord (Stable), Discord PTB, Discord Canary.
-  The Discord web application and all mobile apps are never touched.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DATA COLLECTION BY DcDNS
-
-  DcDNS collects no personal data. The only outbound request made by
-  DcDNS itself is a periodic version check to the GitHub API:
-    GET https://api.github.com/repos/{repo}/releases/latest
-  This request carries only the DcDNS version number in the
-  User-Agent field. No account, device, or usage data is sent.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 OPEN SOURCE & LICENCE
 
-  DcDNS is free and open-source software released under the MIT
-  Licence. The full source code is available for review and audit at:
-    https://github.com/{repo}
+  DcDNS is free and open-source software released under the MIT Licence.
+  Source: https://github.com/{repo}
+  Website: https://dcdns.pages.dev/
 
-  Community contributions, security reports, and independent audits
-  are welcome. Provided "as is", with no warranty of any kind.
-
-  Official website: https://dcdns.pages.dev/
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 By clicking "I Agree & Continue" you confirm that you have read
 and understood this policy in full and accept complete responsibility
 for any modifications made to your local Discord client installation.
@@ -845,9 +873,6 @@ def _build_flavor_map_js():
     return "{\n" + ",\n".join(lines) + "\n    }"
 
 
-# ---------------------------------------------------------------------------
-# HTML UI
-# ---------------------------------------------------------------------------
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html lang="en">
@@ -974,8 +999,6 @@ select:disabled{opacity:.35;cursor:not-allowed}
 .modal-btn.primary{background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;box-shadow:0 4px 14px -4px rgba(168,85,247,.5)}
 .modal-btn.primary:hover{background:linear-gradient(135deg,#b968ff,#8b3ff0);box-shadow:0 8px 20px -6px rgba(168,85,247,.65);transform:translateY(-1px)}
 .modal-btn.primary:active{transform:translateY(0) scale(.97)}
-
-/* Settings */
 .settings-row{display:flex;align-items:flex-start;justify-content:space-between;padding:10px 0;border-bottom:1px solid #1a1a26;gap:8px}
 .settings-row:last-child{border-bottom:none}
 .settings-label{font-size:12px;font-weight:600}
@@ -1001,6 +1024,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
 .verify-badge.ok{background:rgba(34,197,94,.12);color:#22c55e}
 .verify-badge.fail{background:rgba(239,68,68,.12);color:#ef4444}
 .verify-badge.none{background:rgba(113,113,122,.12);color:#71717a}
+
 </style>
 </head>
 <body>
@@ -1011,13 +1035,13 @@ select:disabled{opacity:.35;cursor:not-allowed}
     <span class="title">DcDNS</span>
     <span class="version">v""" + APP_VERSION + """</span>
     <span id="portable-badge" style="display:none;font-size:9px;font-weight:700;background:rgba(34,197,94,.12);color:#22c55e;border:1px solid rgba(34,197,94,.3);border-radius:5px;padding:2px 7px;margin-left:2px;letter-spacing:.04em">PORTABLE</span>
+
     <div class="header-right">
       <button class="icon-btn" id="btn-open-settings" title="Settings">""" + SETTINGS_SVG + """</button>
     </div>
   </div>
   <div class="steps" id="steps"></div>
 
-  <!-- POLICY PAGE -->
   <div class="page active" id="page-policy">
     <div class="page-title">Policy Agreement</div>
     <div class="card">
@@ -1042,7 +1066,6 @@ select:disabled{opacity:.35;cursor:not-allowed}
     <button class="btn primary" id="btn-next" disabled>Continue &rarr;</button>
   </div>
 
-  <!-- INSTALL PAGE -->
   <div class="page" id="page-install">
     <div class="page-title">Select Discord Client</div>
     <div class="page-sub">Select your Discord client below to install or remove DcDNS.</div>
@@ -1075,7 +1098,6 @@ select:disabled{opacity:.35;cursor:not-allowed}
     </div>
   </div>
 
-  <!-- LOG PAGE -->
   <div class="page" id="page-log">
     <div class="page-title" id="log-title">Installing DcDNS...</div>
     <div class="card">
@@ -1093,13 +1115,12 @@ select:disabled{opacity:.35;cursor:not-allowed}
     </div>
   </div>
 
-  <!-- SETTINGS PAGE -->
   <div class="page" id="page-settings">
     <div class="page-title">Settings</div>
     <div class="card">
       <div class="card-inner" style="padding:14px 18px">
 
-        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6"/><path d="M9 12h6"/><path d="M9 15h4"/></svg>Label</div>
+        <div class="settings-group-title">Label</div>
 
         <div class="settings-row">
           <div>
@@ -1121,7 +1142,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
           </div>
         </div>
 
-        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Privacy</div>
+        <div class="settings-group-title">Privacy</div>
 
         <div class="settings-row">
           <div>
@@ -1161,7 +1182,7 @@ select:disabled{opacity:.35;cursor:not-allowed}
         <div class="settings-row">
           <div>
             <div class="settings-label">TLS 1.2+ Hardening</div>
-            <div class="settings-desc">Enforce minimum TLS 1.2 — reject older insecure connections</div>
+            <div class="settings-desc">Enforce minimum TLS 1.2 - reject older insecure connections</div>
           </div>
           <label class="toggle"><input type="checkbox" id="toggle-tls" checked><span class="toggle-slider"></span></label>
         </div>
@@ -1172,12 +1193,50 @@ select:disabled{opacity:.35;cursor:not-allowed}
           </div>
           <label class="toggle"><input type="checkbox" id="toggle-ua" checked><span class="toggle-slider"></span></label>
         </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Block Remote Auth Gateway</div>
+            <div class="settings-desc">Block remote authentication sessions (QR code login tracking)</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="toggle-remote-auth" checked><span class="toggle-slider"></span></label>
+        </div>
 
-        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>DNS</div>
+        <div class="settings-group-title">Fingerprint Protection</div>
+
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Canvas Fingerprint Noise</div>
+            <div class="settings-desc">Inject subtle noise into canvas reads to randomize your fingerprint each session</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="toggle-canvas" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Audio Fingerprint Noise</div>
+            <div class="settings-desc">Add imperceptible noise to AudioContext data used for hardware fingerprinting</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="toggle-audio" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">WebGL Vendor Spoofing</div>
+            <div class="settings-desc">Hide GPU model and vendor string from WebGL fingerprinting APIs</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="toggle-webgl" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Strip Referrer Headers</div>
+            <div class="settings-desc">Trim Referer headers to origin only — prevents cross-site tracking via URL leakage</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="toggle-referrer" checked><span class="toggle-slider"></span></label>
+        </div>
+
+        <div class="settings-group-title">DNS</div>
 
         <div class="settings-row" style="flex-direction:column;align-items:flex-start">
           <div>
-            <div class="settings-label">Custom DoH Server — Primary</div>
+            <div class="settings-label">Custom DoH Server - Primary</div>
             <div class="settings-desc">DNS-over-HTTPS URL (must start with https://)</div>
           </div>
           <input class="settings-input" id="input-dns-primary" type="text" placeholder="https://dns.mullvad.net/dns-query" spellcheck="false">
@@ -1192,13 +1251,13 @@ select:disabled{opacity:.35;cursor:not-allowed}
         </div>
         <div class="settings-row" style="flex-direction:column;align-items:flex-start">
           <div>
-            <div class="settings-label">Custom DoH Server — Fallback</div>
+            <div class="settings-label">Custom DoH Server - Fallback</div>
             <div class="settings-desc">Used if primary DoH server is unreachable</div>
           </div>
           <input class="settings-input" id="input-dns-fallback" type="text" placeholder="https://adblock.dns.mullvad.net/dns-query" spellcheck="false">
         </div>
 
-        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>User-Agent</div>
+        <div class="settings-group-title">User-Agent</div>
 
         <div class="settings-row" style="flex-direction:column;align-items:flex-start">
           <div>
@@ -1208,7 +1267,15 @@ select:disabled{opacity:.35;cursor:not-allowed}
           <input class="settings-input" id="input-custom-ua" type="text" placeholder="e.g. Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ..." spellcheck="false">
         </div>
 
-        <div class="settings-group-title"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Misc</div>
+        <div class="settings-group-title">Rich Presence</div>
+
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Discord Rich Presence</div>
+            <div class="settings-desc">Show "Using DcDNS" status in Discord (only when DcDNS.exe is running)</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="toggle-rpc" checked><span class="toggle-slider"></span></label>
+        </div>
 
       </div>
     </div>
@@ -1219,7 +1286,6 @@ select:disabled{opacity:.35;cursor:not-allowed}
   </div>
 </div>
 
-<!-- Backup modal -->
 <div id="modal-backup" style="display:none" class="modal-overlay">
   <div class="modal">
     <div class="modal-icon">
@@ -1253,6 +1319,12 @@ var _settings = {
   disableSpellcheck: true,
   hardenTls:         true,
   cleanUserAgent:    true,
+  blockRemoteAuth:   true,
+  spoofCanvas:       true,
+  spoofAudio:        true,
+  spoofWebgl:        true,
+  stripReferrer:     true,
+  enableRpc:         true,
   customDnsPrimary:  '',
   customDnsFallback: '',
   customUserAgent:   ''
@@ -1279,101 +1351,6 @@ waitForApi(function() {
   } catch(e) {}
 }, 30);
 
-function applySettingsToUI() {
-  try {
-    function setChk(id, v) { var el = safeEl(id); if (el) el.checked = v; }
-    function setVal(id, v) { var el = safeEl(id); if (el) el.value = v || ''; }
-    var showLabel = _settings.showLabel !== false;
-    setChk('toggle-label',    showLabel);
-    setChk('toggle-telemetry',_settings.blockTelemetry    !== false);
-    setChk('toggle-crash',    _settings.blockCrashReports !== false);
-    setChk('toggle-webrtc',   _settings.blockWebrtc       !== false);
-    setChk('toggle-geo',      _settings.blockGeolocation  !== false);
-    setChk('toggle-spell',    _settings.disableSpellcheck !== false);
-    setChk('toggle-tls',      _settings.hardenTls         !== false);
-    setChk('toggle-ua',       _settings.cleanUserAgent    !== false);
-    setVal('input-dns-primary',  _settings.customDnsPrimary);
-    setVal('input-dns-fallback', _settings.customDnsFallback);
-    setVal('input-custom-ua',    _settings.customUserAgent);
-    var selPos = safeEl('select-label-position');
-    if (selPos) selPos.value = _settings.labelPosition || 'bottom-right';
-    var posRow = safeEl('row-label-position');
-    if (posRow) posRow.style.display = showLabel ? '' : 'none';
-  } catch(e) {}
-}
-
-function safeBind(id, eventName, handler) {
-  try {
-    var el = document.getElementById(id);
-    if (el) {
-      el.addEventListener(eventName, function(evt) {
-        try { handler(evt); } catch (err) { console.error('[DcDNS] Handler error in ' + id + ':', err); }
-      });
-    }
-  } catch (err) {}
-}
-
-function safeEl(id) { try { return document.getElementById(id); } catch(e) { return null; } }
-
-safeBind('toggle-label', 'change', function() {
-  try {
-    var el = safeEl('toggle-label');
-    var posRow = safeEl('row-label-position');
-    if (el && posRow) posRow.style.display = el.checked ? '' : 'none';
-  } catch(e) {}
-});
-
-/* Orbs */
-try {
-  var bg = document.getElementById('bg');
-  var orbColors = ['#a855f7','#ec4899','#3b82f6','#06b6d4','#6366f1','#8b5cf6'];
-  if (bg) {
-    for (var _i = 0; _i < 24; _i++) {
-      var orb = document.createElement('div');
-      orb.className = 'orb';
-      var size = 55 + Math.random() * 130;
-      orb.style.width  = size + 'px';
-      orb.style.height = size + 'px';
-      orb.style.left   = Math.random() * 100 + '%';
-      orb.style.top    = Math.random() * 100 + '%';
-      orb.style.background = orbColors[Math.floor(Math.random() * orbColors.length)];
-      orb.style.animationDuration = (13 + Math.random() * 17) + 's';
-      orb.style.animationDelay   = (-Math.random() * 26) + 's';
-      bg.appendChild(orb);
-    }
-  }
-} catch (err) {}
-
-function showPage(name) {
-  try {
-    document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
-    var target = document.getElementById('page-' + name);
-    if (target) target.classList.add('active');
-    if (name !== 'settings') updateSteps(name);
-  } catch(err) {}
-}
-
-function updateSteps(active) {
-  try {
-    var steps = ['policy','install','log'];
-    var names = ['Policy','Install','Log'];
-    var html = '';
-    var activeIdx = steps.indexOf(active);
-    steps.forEach(function(s, i) {
-      var done = activeIdx > i;
-      var isActive = activeIdx === i;
-      html += '<div class="step ' + (isActive ? 'active ' : '') + (done ? 'done' : '') + '">' +
-        '<span class="step-dot" style="color:' + ((done||isActive) ? '#a855f7' : '#3f3f46') + '">&#9679;</span>' +
-        '<span class="step-text" style="color:' + ((done||isActive) ? '#e8e8ef' : '#71717a') + '">' + names[i] + '</span></div>';
-      if (i < 2) html += '<span class="step-line">&mdash;</span>';
-    });
-    var stepsEl = document.getElementById('steps');
-    if (stepsEl) stepsEl.innerHTML = html;
-  } catch(err) {}
-}
-
-try { updateSteps('policy'); } catch (err) {}
-
 waitForApi(function() {
   try {
     window.pywebview.api.get_mode().then(function(res) {
@@ -1388,6 +1365,8 @@ waitForApi(function() {
     }).catch(function() {});
   } catch(e) {}
 }, 30);
+
+
 
 window.selectedInstall = null;
 window.discordInstalls = [];
@@ -1419,12 +1398,11 @@ safeBind('btn-done', 'click', function() {
 safeBind('btn-open-settings', 'click', function() { applySettingsToUI(); showPage('settings'); });
 safeBind('btn-settings-back', 'click', function() { showPage('install'); });
 
-/* DNS preset buttons */
 try {
   document.querySelectorAll('.dns-preset-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
       var p = btn.dataset.p, f = btn.dataset.f;
-      var ip = safeEl('input-dns-primary'),   fi = safeEl('input-dns-fallback');
+      var ip = safeEl('input-dns-primary'), fi = safeEl('input-dns-fallback');
       if (ip) ip.value = p || '';
       if (fi) fi.value = f || '';
     });
@@ -1444,10 +1422,19 @@ safeBind('btn-settings-save', 'click', function() {
   _settings.disableSpellcheck  = chk('toggle-spell');
   _settings.hardenTls          = chk('toggle-tls');
   _settings.cleanUserAgent     = chk('toggle-ua');
+  _settings.blockRemoteAuth    = chk('toggle-remote-auth');
+  _settings.spoofCanvas        = chk('toggle-canvas');
+  _settings.spoofAudio         = chk('toggle-audio');
+  _settings.spoofWebgl         = chk('toggle-webgl');
+  _settings.stripReferrer      = chk('toggle-referrer');
+  _settings.enableRpc          = chk('toggle-rpc');
   _settings.customDnsPrimary   = val('input-dns-primary');
   _settings.customDnsFallback  = val('input-dns-fallback');
   _settings.customUserAgent    = val('input-custom-ua');
   saveSettings();
+  waitForApi(function() {
+    try { window.pywebview.api.apply_rpc_setting(_settings.enableRpc); } catch(e) {}
+  }, 5);
   showPage('install');
 });
 
@@ -1585,218 +1572,554 @@ function selectFlavor(flavor) {
     var sha256      = card.dataset.sha256 || '';
     window.selectedInstall = { flavor: flavor, path: card.dataset.path, version: card.dataset.version, injected: isInjected };
     var displayName = card.querySelector('.dc-name') ? card.querySelector('.dc-name').textContent : flavor;
-    if (statusEl) {
-      if (isInjected && isUpToDate) {
-        statusEl.textContent = displayName + ' v' + card.dataset.version + ' \u2014 DcDNS v' + dcdnsVersion + ' installed.';
-        statusEl.className = 'status warn';
-        if (installBtn)   installBtn.disabled   = true;
-        if (uninstallBtn) uninstallBtn.disabled = false;
-      } else if (isInjected && !isUpToDate) {
-        statusEl.textContent = displayName + ' v' + card.dataset.version + ' \u2014 outdated DcDNS v' + dcdnsVersion + '. Reinstall to upgrade.';
-        statusEl.className = 'status warn';
-        if (installBtn)   installBtn.disabled   = false;
-        if (uninstallBtn) uninstallBtn.disabled = false;
-      } else {
-        statusEl.textContent = displayName + ' v' + card.dataset.version + ' selected.';
-        statusEl.className = 'status ok';
-        if (installBtn)   installBtn.disabled   = false;
-        if (uninstallBtn) uninstallBtn.disabled = true;
-      }
-    }
-    if (verifyRow && verifyHash && verifyBadge) {
+    if (verifyRow) verifyRow.style.display = sha256 ? '' : 'none';
+    if (verifyHash) verifyHash.textContent = sha256 ? 'SHA-256: ' + sha256 : '';
+    if (verifyBadge) {
       if (sha256) {
-        verifyRow.style.display = 'flex';
-        verifyHash.textContent  = 'SHA-256: ' + sha256;
-        if (isInjected) { verifyBadge.textContent = 'DcDNS active'; verifyBadge.className = 'verify-badge ok'; }
-        else            { verifyBadge.textContent = 'Stock file';   verifyBadge.className = 'verify-badge none'; }
-      } else { verifyRow.style.display = 'none'; }
-    }
-    if (warnEl) {
-      var isStale = card.dataset.stale === '1';
-      if (isStale) {
-        var ageDays = parseInt(card.dataset.ageDays || '0', 10);
-        warnEl.style.display = 'flex';
-        var warnText = warnEl.querySelector('span') || warnEl;
-        warnText.textContent = 'Your Discord client was last updated ' + ageDays + ' day' + (ageDays !== 1 ? 's' : '') + ' ago. DcDNS works best with a recent Discord version.';
+        verifyBadge.textContent = 'Verified';
+        verifyBadge.className = 'verify-badge ok';
       } else {
-        warnEl.style.display = 'none';
+        verifyBadge.textContent = 'Not verified';
+        verifyBadge.className = 'verify-badge none';
       }
     }
-  } catch(err) {}
+    if (isInjected) {
+      var msg = displayName + ': DcDNS v' + dcdnsVersion + ' installed';
+      if (!isUpToDate) msg += ' (outdated - reinstall recommended)';
+      if (statusEl) { statusEl.textContent = msg; statusEl.className = isUpToDate ? 'status ok' : 'status warn'; }
+      if (warnEl) warnEl.style.display = '';
+    } else {
+      if (statusEl) { statusEl.textContent = displayName + ': Ready to install'; statusEl.className = 'status ok'; }
+      if (warnEl) warnEl.style.display = 'none';
+    }
+    if (installBtn)   installBtn.disabled   = false;
+    if (uninstallBtn) uninstallBtn.disabled = !isInjected;
+  } catch(e) {}
 }
 
-function handleOpResult(res) {
+function applySettingsToUI() {
   try {
-    if (res === 'ok') return;
-    if (res === 'busy') {
-      addLog('[X] Another operation is already running. Wait and try again.');
-      finishLog(false);
-    } else if (res === 'invalid') {
-      addLog('[X] Invalid request — no valid target path was found.');
-      finishLog(false);
-    } else {
-      addLog('[X] Unexpected error: ' + String(res || 'unknown'));
-      finishLog(false);
+    function setChk(id, v) { var el = safeEl(id); if (el) el.checked = v; }
+    function setVal(id, v) { var el = safeEl(id); if (el) el.value = v || ''; }
+    var showLabel = _settings.showLabel !== false;
+    setChk('toggle-label',       showLabel);
+    setChk('toggle-telemetry',   _settings.blockTelemetry    !== false);
+    setChk('toggle-crash',       _settings.blockCrashReports !== false);
+    setChk('toggle-webrtc',      _settings.blockWebrtc       !== false);
+    setChk('toggle-geo',         _settings.blockGeolocation  !== false);
+    setChk('toggle-spell',       _settings.disableSpellcheck !== false);
+    setChk('toggle-tls',         _settings.hardenTls         !== false);
+    setChk('toggle-ua',          _settings.cleanUserAgent    !== false);
+    setChk('toggle-remote-auth', _settings.blockRemoteAuth   !== false);
+    setChk('toggle-canvas',      _settings.spoofCanvas       !== false);
+    setChk('toggle-audio',       _settings.spoofAudio        !== false);
+    setChk('toggle-webgl',       _settings.spoofWebgl        !== false);
+    setChk('toggle-referrer',    _settings.stripReferrer     !== false);
+    setChk('toggle-rpc',         _settings.enableRpc         !== false);
+    setVal('input-dns-primary',  _settings.customDnsPrimary);
+    setVal('input-dns-fallback', _settings.customDnsFallback);
+    setVal('input-custom-ua',    _settings.customUserAgent);
+    var selPos = safeEl('select-label-position');
+    if (selPos) selPos.value = _settings.labelPosition || 'bottom-right';
+    var posRow = safeEl('row-label-position');
+    if (posRow) posRow.style.display = showLabel ? '' : 'none';
+  } catch(e) {}
+}
+
+function safeBind(id, eventName, handler) {
+  try {
+    var el = document.getElementById(id);
+    if (el) {
+      el.addEventListener(eventName, function(evt) {
+        try { handler(evt); } catch (err) { console.error('[DcDNS] Handler error in ' + id + ':', err); }
+      });
     }
   } catch (err) {}
 }
 
+function safeEl(id) { try { return document.getElementById(id); } catch(e) { return null; } }
+
+safeBind('toggle-label', 'change', function() {
+  try {
+    var el = safeEl('toggle-label');
+    var posRow = safeEl('row-label-position');
+    if (el && posRow) posRow.style.display = el.checked ? '' : 'none';
+  } catch(e) {}
+});
+
+try {
+  var bg = document.getElementById('bg');
+  var orbColors = ['#a855f7','#ec4899','#3b82f6','#06b6d4','#6366f1','#8b5cf6'];
+  if (bg) {
+    for (var _i = 0; _i < 24; _i++) {
+      var orb = document.createElement('div');
+      orb.className = 'orb';
+      var size = 55 + Math.random() * 130;
+      orb.style.width  = size + 'px';
+      orb.style.height = size + 'px';
+      orb.style.left   = Math.random() * 100 + '%';
+      orb.style.top    = Math.random() * 100 + '%';
+      orb.style.background = orbColors[Math.floor(Math.random() * orbColors.length)];
+      orb.style.animationDuration = (13 + Math.random() * 17) + 's';
+      orb.style.animationDelay   = (-Math.random() * 26) + 's';
+      bg.appendChild(orb);
+    }
+  }
+} catch (err) {}
+
+function showPage(name) {
+  try {
+    document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+    var target = document.getElementById('page-' + name);
+    if (target) target.classList.add('active');
+    if (name !== 'settings') updateSteps(name);
+  } catch(err) {}
+}
+
+function updateSteps(active) {
+  try {
+    var steps = ['policy','install','log'];
+    var names = ['Policy','Install','Log'];
+    var html = '';
+    var activeIdx = steps.indexOf(active);
+    steps.forEach(function(s, i) {
+      var done = activeIdx > i;
+      var isActive = activeIdx === i;
+      html += '<div class="step ' + (isActive ? 'active ' : '') + (done ? 'done' : '') + '">' +
+        '<span class="step-dot" style="color:' + ((done||isActive) ? '#a855f7' : '#3f3f46') + '">&#9679;</span>' +
+        '<span class="step-text" style="color:' + ((done||isActive) ? '#e8e8ef' : '#71717a') + '">' + names[i] + '</span></div>';
+      if (i < 2) html += '<span class="step-line">&mdash;</span>';
+    });
+    var stepsEl = document.getElementById('steps');
+    if (stepsEl) stepsEl.innerHTML = html;
+  } catch(err) {}
+}
+
+try { updateSteps('policy'); } catch (err) {}
+
 safeBind('btn-install', 'click', function() {
   if (!window.selectedInstall) return;
   var inst = Object.assign({}, window.selectedInstall, { settings: _settings });
+  var logTitle = safeEl('log-title');
+  if (logTitle) logTitle.textContent = 'Installing DcDNS...';
   showPage('log');
-  var logTitle = safeEl('log-title'), logBox = safeEl('log-box');
-  var back2 = safeEl('btn-back2'), restart = safeEl('btn-restart'), done = safeEl('btn-done');
-  if (logTitle) { logTitle.textContent = 'Installing DcDNS...'; logTitle.style.color = '#e8e8ef'; }
-  if (logBox)   logBox.innerHTML = '';
-  if (back2)    back2.disabled   = true;
-  if (restart)  restart.disabled = true;
-  if (done)     done.disabled    = true;
+  var logBox = safeEl('log-box');
+  if (logBox) logBox.innerHTML = '';
   waitForApi(function() {
     window.pywebview.api.install(JSON.stringify(inst)).then(function(res) {
       if (res === 'ask_backup') {
         window.__dcdnsAskBackup().then(function(choice) {
-          window.pywebview.api.install_confirm_backup(choice).then(function(res2) {
-            handleOpResult(res2);
-          }).catch(function() { handleOpResult('error'); });
+          waitForApi(function() {
+            window.pywebview.api.install_confirm_backup(choice);
+          }, 10);
         });
-      } else {
-        handleOpResult(res);
       }
-    }).catch(function() { handleOpResult('error'); });
-  });
+    }).catch(function() {});
+  }, 20);
 });
 
 safeBind('btn-uninstall', 'click', function() {
   if (!window.selectedInstall) return;
+  var logTitle = safeEl('log-title');
+  if (logTitle) logTitle.textContent = 'Uninstalling DcDNS...';
   showPage('log');
-  var logTitle = safeEl('log-title'), logBox = safeEl('log-box');
-  var back2 = safeEl('btn-back2'), restart = safeEl('btn-restart'), done = safeEl('btn-done');
-  if (logTitle) { logTitle.textContent = 'Uninstalling DcDNS & Restoring Backup...'; logTitle.style.color = '#e8e8ef'; }
-  if (logBox)   logBox.innerHTML = '';
-  if (back2)    back2.disabled   = true;
-  if (restart)  restart.disabled = true;
-  if (done)     done.disabled    = true;
+  var logBox = safeEl('log-box');
+  if (logBox) logBox.innerHTML = '';
   waitForApi(function() {
-    window.pywebview.api.uninstall(JSON.stringify(window.selectedInstall)).then(function(res) {
-      handleOpResult(res);
-    }).catch(function() { handleOpResult('error'); });
-  });
+    window.pywebview.api.uninstall(JSON.stringify(window.selectedInstall)).catch(function() {});
+  }, 20);
 });
 
 safeBind('btn-restart', 'click', function() {
   if (!window.selectedInstall) return;
-  var back2 = safeEl('btn-back2'), restart = safeEl('btn-restart'), done = safeEl('btn-done'), logTitle = safeEl('log-title');
-  if (back2)    back2.disabled   = true;
-  if (restart)  restart.disabled = true;
-  if (done)     done.disabled    = true;
-  if (logTitle) { logTitle.textContent = 'Restarting Discord...'; logTitle.style.color = '#e8e8ef'; }
+  var restartBtn = safeEl('btn-restart');
+  if (restartBtn) restartBtn.disabled = true;
   waitForApi(function() {
-    window.pywebview.api.restart_discord(JSON.stringify(window.selectedInstall)).then(function(res) {
-      handleOpResult(res);
-    }).catch(function() { handleOpResult('error'); });
-  });
+    window.pywebview.api.restart_discord(JSON.stringify(window.selectedInstall)).catch(function() {});
+  }, 20);
+});
+
+safeBind('btn-back2', 'click', function() {
+  showPage('install');
+  scanAll();
 });
 
 function addLog(msg) {
   try {
     var box = safeEl('log-box');
     if (!box) return;
-    var text = String(msg || '');
     var line = document.createElement('div');
     line.className = 'log-line';
-    if (text.startsWith('[+]'))                              line.classList.add('ok');
-    else if (text.startsWith('[X]') || text.startsWith('[x]')) line.classList.add('err');
-    else if (text.startsWith('[!]'))                           line.classList.add('warn');
-    else if (text.startsWith('='))                             line.classList.add('head');
-    line.textContent = text;
+    if (msg.startsWith('[+]')) line.className += ' ok';
+    else if (msg.startsWith('[X]') || msg.startsWith('[!] WARNING') || msg.startsWith('[!] Aborting')) line.className += ' err';
+    else if (msg.startsWith('[!]')) line.className += ' warn';
+    else if (msg.startsWith('===') || msg.indexOf('COMPLETE') !== -1 || msg.indexOf('->') !== -1) line.className += ' head';
+    line.textContent = msg;
     box.appendChild(line);
     box.scrollTop = box.scrollHeight;
-  } catch(err) {}
+  } catch(e) {}
 }
 
 function finishLog(ok) {
   try {
-    var back2 = safeEl('btn-back2'), done = safeEl('btn-done'), restart = safeEl('btn-restart');
+    var back2  = safeEl('btn-back2');
+    var done   = safeEl('btn-done');
+    var restart= safeEl('btn-restart');
     if (back2)   back2.disabled   = false;
     if (done)    done.disabled    = false;
-    if (restart) restart.disabled = !window.selectedInstall;
-    var titleEl = safeEl('log-title');
-    if (titleEl) {
-      if (ok) { titleEl.textContent = 'Done';  titleEl.style.color = '#22c55e'; }
-      else    { titleEl.textContent = 'Error'; titleEl.style.color = '#ef4444'; }
-    }
-    window._needRescan = true;
-  } catch(err) {}
+    if (restart) restart.disabled = !ok;
+    var logTitle = safeEl('log-title');
+    if (logTitle) logTitle.textContent = ok ? 'Operation Complete' : 'Operation Failed';
+  } catch(e) {}
 }
-
-safeBind('btn-back2', 'click', function() {
-  showPage('install');
-  if (window._needRescan) {
-    window._needRescan = false;
-    window.selectedInstall = null;
-    var installBtn  = safeEl('btn-install'),   uninstallBtn = safeEl('btn-uninstall');
-    var statusEl    = safeEl('install-status'), warnEl = safeEl('update-warning'), verifyRow = safeEl('verify-row');
-    if (installBtn)   installBtn.disabled   = true;
-    if (uninstallBtn) uninstallBtn.disabled = true;
-    if (statusEl) { statusEl.textContent = ''; statusEl.className = 'status'; }
-    if (warnEl)   warnEl.style.display   = 'none';
-    if (verifyRow) verifyRow.style.display = 'none';
-    scanAll();
-  }
-});
 </script>
 </body>
-</html>
-"""
+</html>"""
 
 
-# ---------------------------------------------------------------------------
-# Discord scanner & patcher
-# ---------------------------------------------------------------------------
+class DiscordRPC:
+    CLIENT_ID = "1538182674399760575"
+    PIPE_PATH_TEMPLATE = r"\\.\pipe\discord-ipc-{}"
+
+    def __init__(self):
+        self._sock = None
+        self._connected = False
+        self._active = False
+        self._lock = threading.Lock()
+        self._thread = None
+        self._enabled = True
+        self._start_time = int(time.time())
+
+    def _connect(self):
+        for i in range(10):
+            pipe = self.PIPE_PATH_TEMPLATE.format(i)
+            try:
+                import ctypes
+                import ctypes.wintypes
+                GENERIC_READ  = 0x80000000
+                GENERIC_WRITE = 0x40000000
+                OPEN_EXISTING = 3
+                handle = ctypes.windll.kernel32.CreateFileW(
+                    pipe, GENERIC_READ | GENERIC_WRITE, 0, None,
+                    OPEN_EXISTING, 0, None
+                )
+                if handle == ctypes.wintypes.HANDLE(-1).value:
+                    continue
+                self._handle = handle
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _write_pipe(self, data):
+        try:
+            import ctypes
+            payload = data.encode("utf-8")
+            buf = ctypes.create_string_buffer(payload)
+            written = ctypes.c_ulong(0)
+            ctypes.windll.kernel32.WriteFile(
+                self._handle, buf, len(payload),
+                ctypes.byref(written), None
+            )
+            return written.value == len(payload)
+        except Exception:
+            return False
+
+    def _read_pipe(self, size=65536):
+        try:
+            import ctypes
+            buf = ctypes.create_string_buffer(size)
+            read = ctypes.c_ulong(0)
+            ctypes.windll.kernel32.ReadFile(
+                self._handle, buf, size,
+                ctypes.byref(read), None
+            )
+            return buf.raw[:read.value]
+        except Exception:
+            return b""
+
+    def _send_frame(self, op, payload):
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            header = struct.pack("<II", op, len(data))
+            full = header + data
+            import ctypes
+            buf = ctypes.create_string_buffer(full)
+            written = ctypes.c_ulong(0)
+            ctypes.windll.kernel32.WriteFile(
+                self._handle, buf, len(full),
+                ctypes.byref(written), None
+            )
+            return written.value == len(full)
+        except Exception:
+            return False
+
+    def _recv_frame(self):
+        try:
+            import ctypes
+            hdr_buf = ctypes.create_string_buffer(8)
+            read = ctypes.c_ulong(0)
+            ctypes.windll.kernel32.ReadFile(
+                self._handle, hdr_buf, 8,
+                ctypes.byref(read), None
+            )
+            if read.value < 8:
+                return None, None
+            op, length = struct.unpack("<II", hdr_buf.raw[:8])
+            if length == 0:
+                return op, {}
+            data_buf = ctypes.create_string_buffer(length)
+            ctypes.windll.kernel32.ReadFile(
+                self._handle, data_buf, length,
+                ctypes.byref(read), None
+            )
+            return op, json.loads(data_buf.raw[:read.value].decode("utf-8"))
+        except Exception:
+            return None, None
+
+    def _close_handle(self):
+        try:
+            import ctypes
+            if hasattr(self, "_handle") and self._handle:
+                ctypes.windll.kernel32.CloseHandle(self._handle)
+                self._handle = None
+        except Exception:
+            pass
+
+    def _rpc_loop(self):
+        while self._enabled:
+            try:
+                if not self._connect():
+                    self._active = False
+                    time.sleep(15)
+                    continue
+
+                handshake = {"v": 1, "client_id": self.CLIENT_ID}
+                if not self._send_frame(0, handshake):
+                    self._close_handle()
+                    self._active = False
+                    time.sleep(15)
+                    continue
+
+                op, resp = self._recv_frame()
+                if op is None:
+                    self._close_handle()
+                    self._active = False
+                    time.sleep(15)
+                    continue
+
+                presence = {
+                    "cmd": "SET_ACTIVITY",
+                    "args": {
+                        "pid": os.getpid(),
+                        "activity": {
+                            "details": "Privacy-hardened \u2022 DoH \u2022 Telemetry blocked",
+                            "state": "DcDNS v" + APP_VERSION + " active",
+                            "timestamps": {"start": self._start_time},
+                            "assets": {
+                                "large_image": "dcdns_logo",
+                                "large_text": "DcDNS \u2014 Privacy Framework for Discord",
+                                "small_image": "dcdns_shield",
+                                "small_text": "DNS encrypted via DNS-over-HTTPS",
+                            },
+                            "buttons": [
+                                {"label": "Get DcDNS", "url": "https://dcdns.pages.dev/"},
+                                {"label": "GitHub", "url": "https://github.com/" + GITHUB_REPO_SLUG},
+                            ],
+                            "type": 0,
+                        }
+                    },
+                    "nonce": str(int(time.time() * 1000))
+                }
+                self._send_frame(1, presence)
+                self._recv_frame()
+                self._active = True
+
+                while self._enabled:
+                    time.sleep(30)
+                    if not self._send_frame(1, presence):
+                        break
+                    self._recv_frame()
+
+                self._close_handle()
+                self._active = False
+
+            except Exception:
+                self._close_handle()
+                self._active = False
+                time.sleep(15)
+
+    def start(self):
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._enabled = True
+            self._thread = threading.Thread(target=self._rpc_loop, daemon=True)
+            self._thread.start()
+
+    def stop(self):
+        with self._lock:
+            self._enabled = False
+            self._active = False
+            self._close_handle()
+
+    def is_active(self):
+        return self._active and self._enabled
+
+
+_rpc_instance = None
+_rpc_lock = threading.Lock()
+
+
+def _get_rpc():
+    global _rpc_instance
+    with _rpc_lock:
+        if _rpc_instance is None:
+            _rpc_instance = DiscordRPC()
+        return _rpc_instance
+
+
+DEFAULT_PAYLOAD_SETTINGS = {
+    "showLabel":         True,
+    "labelPosition":     "bottom-right",
+    "blockTelemetry":    True,
+    "blockCrashReports": True,
+    "blockWebrtc":       True,
+    "blockGeolocation":  True,
+    "disableSpellcheck": True,
+    "hardenTls":         True,
+    "cleanUserAgent":    True,
+    "blockRemoteAuth":   True,
+    "spoofCanvas":       True,
+    "spoofAudio":        True,
+    "spoofWebgl":        True,
+    "stripReferrer":     True,
+    "enableRpc":         True,
+    "customDnsPrimary":  "",
+    "customDnsFallback": "",
+    "customUserAgent":   "",
+}
+
+DISCORD_APPDATA_DIRS = {
+    "DISCORD":       "discord",
+    "DISCORDPTB":    "discordptb",
+    "DISCORDCANARY": "discordcanary",
+    "MANUAL":        "discord",
+}
+
+
+def _get_portable_conf_path():
+    try:
+        base = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else sys.argv[0]))
+        candidate = os.path.join(base, "dcdns_portable.json")
+        if os.path.isfile(candidate):
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _load_portable_conf():
+    path = _get_portable_conf_path()
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _save_portable_conf(settings):
+    path = _get_portable_conf_path()
+    if not path:
+        return False
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(_normalize_payload_settings(settings), f, indent=2)
+        return True
+    except OSError:
+        return False
+
+
+def _is_portable_mode():
+    return _get_portable_conf_path() is not None
+
+
+def _normalize_payload_settings(settings):
+    conf = dict(DEFAULT_PAYLOAD_SETTINGS)
+    if settings:
+        for key in DEFAULT_PAYLOAD_SETTINGS:
+            if key in settings and settings[key] is not None:
+                conf[key] = settings[key]
+    return conf
+
+
+def _build_payload(settings):
+    conf = _normalize_payload_settings(settings)
+    payload = DCDNS_PAYLOAD
+    marker = "var __conf = readConf();"
+    if marker not in payload:
+        raise RuntimeError("Payload marker not found - cannot bake settings into payload")
+    conf_json = json.dumps(conf, separators=(",", ":"))
+    baked = "var __conf = Object.assign({}, " + conf_json + ", readConf());"
+    result = payload.replace(marker, baked, 1)
+    if result.count(marker) > 0 or result.count("var __conf = Object.assign") != 1:
+        raise RuntimeError("Payload bake produced unexpected output - aborting")
+    return result
+
+
+def _write_discord_conf(flavor, settings):
+    if _is_portable_mode():
+        return _save_portable_conf(settings)
+    folder = DISCORD_APPDATA_DIRS.get(flavor, "discord")
+    roaming = os.getenv("APPDATA", "")
+    if not roaming:
+        return False
+    conf_dir = os.path.join(roaming, folder)
+    conf_path = os.path.join(conf_dir, "dcdns_conf.json")
+    try:
+        os.makedirs(conf_dir, exist_ok=True)
+        with open(conf_path, "w", encoding="utf-8") as f:
+            json.dump(_normalize_payload_settings(settings), f, indent=2)
+        return True
+    except OSError:
+        return False
+
+
 class DiscordDetector:
     @staticmethod
     def find_installations():
         best = {}
 
-        def consider(path, flavor):
-            if not path or flavor not in FLAVORS:
-                return
+        def score(path):
             try:
-                norm = os.path.normcase(os.path.normpath(path))
-                if not os.path.isfile(norm):
-                    return
-                mtime = os.path.getmtime(norm)
-            except OSError:
+                return os.path.getmtime(path)
+            except Exception:
+                return 0
+
+        def consider(path, flavor):
+            if not path or not os.path.isfile(path):
                 return
-            version    = DiscordDetector._get_version(norm)
-            vkey       = DiscordDetector._version_key(version)
-            status     = DiscordDetector.get_injection_status(norm)
-            chrome_ver = DiscordDetector._get_chrome_version(norm)
-            sha256     = DiscordDetector.hash_file(norm)
-            candidate  = {
-                "flavor": flavor, "version": version, "path": norm,
-                "injected": status["injected"], "dcdns_version": status["dcdns_version"],
-                "up_to_date": status["up_to_date"], "chrome_version": chrome_ver,
-                "sha256": sha256, "_mtime": mtime, "_vkey": vkey,
-            }
-            current = best.get(flavor)
-            if current is None:
-                best[flavor] = candidate
-                return
-            if vkey != (-1,) and current["_vkey"] != (-1,):
-                if vkey > current["_vkey"]:
-                    best[flavor] = candidate
-                elif vkey == current["_vkey"] and mtime > current["_mtime"]:
-                    best[flavor] = candidate
-            elif vkey != (-1,) and current["_vkey"] == (-1,):
-                best[flavor] = candidate
-            elif vkey == (-1,) and current["_vkey"] == (-1,) and mtime > current["_mtime"]:
-                best[flavor] = candidate
+            norm = os.path.normcase(os.path.normpath(path))
+            if flavor not in best or score(path) > score(best[flavor]["path"]):
+                status = DiscordDetector.get_injection_status(path)
+                ver = DiscordDetector._get_version(path)
+                sha = DiscordDetector.hash_file(path)
+                chrome_ver = DiscordDetector._get_chrome_version(path)
+                best[flavor] = {
+                    "flavor": flavor, "version": ver, "path": path,
+                    "injected": status["injected"],
+                    "dcdns_version": status["dcdns_version"],
+                    "up_to_date": status["up_to_date"],
+                    "chrome_version": chrome_ver,
+                    "sha256": sha,
+                }
 
         def glob_consider(pattern, flavor):
             try:
-                for p in glob.glob(pattern, recursive=False):
+                for p in glob.glob(pattern):
                     consider(p, flavor)
             except Exception:
                 pass
@@ -1811,26 +2134,8 @@ class DiscordDetector:
         def scan_roaming_dir(base, flavor):
             if not base or not os.path.isdir(base):
                 return
-            try:
-                entries = sorted(os.listdir(base), reverse=True)
-            except OSError:
-                return
-            for entry in entries:
-                entry_path = os.path.join(base, entry)
-                if not os.path.isdir(entry_path):
-                    continue
-                mods_dir = os.path.join(entry_path, "modules")
-                if not os.path.isdir(mods_dir):
-                    continue
-                try:
-                    mod_entries = os.listdir(mods_dir)
-                except OSError:
-                    continue
-                for mod in mod_entries:
-                    mod_lower = mod.lower()
-                    if not mod_lower.startswith("discord_desktop_core"):
-                        continue
-                    mod_path = os.path.join(mods_dir, mod)
+            for mod_dir in glob.glob(os.path.join(base, "modules")):
+                for mod_path in glob.glob(os.path.join(mod_dir, "discord_desktop_core-*")):
                     direct = os.path.join(mod_path, "index.js")
                     if os.path.isfile(direct):
                         consider(direct, flavor)
@@ -2230,123 +2535,42 @@ class DiscordDetector:
             return False
 
 
-DEFAULT_PAYLOAD_SETTINGS = {
-    "showLabel":         True,
-    "labelPosition":     "bottom-right",
-    "blockTelemetry":    True,
-    "blockCrashReports": True,
-    "blockWebrtc":       True,
-    "blockGeolocation":  True,
-    "disableSpellcheck": True,
-    "hardenTls":         True,
-    "cleanUserAgent":    True,
-    "customDnsPrimary":  "",
-    "customDnsFallback": "",
-    "customUserAgent":   "",
-}
-
-DISCORD_APPDATA_DIRS = {
-    "DISCORD":       "discord",
-    "DISCORDPTB":    "discordptb",
-    "DISCORDCANARY": "discordcanary",
-    "MANUAL":        "discord",
-}
-
-
-def _get_portable_conf_path():
-    try:
-        base = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else sys.argv[0]))
-        candidate = os.path.join(base, "dcdns_portable.json")
-        if os.path.isfile(candidate):
-            return candidate
-    except Exception:
-        pass
-    return None
-
-
-def _load_portable_conf():
-    path = _get_portable_conf_path()
-    if not path:
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except Exception:
-        return None
-
-
-def _save_portable_conf(settings):
-    path = _get_portable_conf_path()
-    if not path:
-        return False
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(_normalize_payload_settings(settings), f, indent=2)
-        return True
-    except OSError:
-        return False
-
-
-def _is_portable_mode():
-    return _get_portable_conf_path() is not None
-
-
-def _normalize_payload_settings(settings):
-    conf = dict(DEFAULT_PAYLOAD_SETTINGS)
-    if settings:
-        for key in DEFAULT_PAYLOAD_SETTINGS:
-            if key in settings and settings[key] is not None:
-                conf[key] = settings[key]
-    return conf
-
-
-def _build_payload(settings):
-    conf = _normalize_payload_settings(settings)
-    payload = DCDNS_PAYLOAD
-    marker = "var __conf = readConf();"
-    if marker not in payload:
-        raise RuntimeError("Payload marker not found — cannot bake settings into payload")
-    conf_json = json.dumps(conf, separators=(",", ":"))
-    baked = "var __conf = Object.assign({}, " + conf_json + ", readConf());"
-    result = payload.replace(marker, baked, 1)
-    if result.count(marker) > 0 or result.count("var __conf = Object.assign") != 1:
-        raise RuntimeError("Payload bake produced unexpected output — aborting")
-    return result
-
-
-def _write_discord_conf(flavor, settings):
-    if _is_portable_mode():
-        return _save_portable_conf(settings)
-    folder = DISCORD_APPDATA_DIRS.get(flavor, "discord")
-    roaming = os.getenv("APPDATA", "")
-    if not roaming:
-        return False
-    conf_dir = os.path.join(roaming, folder)
-    conf_path = os.path.join(conf_dir, "dcdns_conf.json")
-    try:
-        os.makedirs(conf_dir, exist_ok=True)
-        with open(conf_path, "w", encoding="utf-8") as f:
-            json.dump(_normalize_payload_settings(settings), f, indent=2)
-        return True
-    except OSError:
-        return False
-
-
-# ---------------------------------------------------------------------------
-# API exposed to the WebView UI
-# ---------------------------------------------------------------------------
 class Api:
     def __init__(self):
-        self.window       = None
-        self.installations= []
-        self._queue       = queue.Queue()
-        self._running     = True
-        self._js_lock     = threading.Lock()
-        self._op_lock     = threading.Lock()
+        self.window        = None
+        self.installations = []
+        self._queue        = queue.Queue()
+        self._running      = True
+        self._js_lock      = threading.Lock()
+        self._op_lock      = threading.Lock()
         self._pending_install = None
         self._thread = threading.Thread(target=self._process_queue, daemon=True)
         self._thread.start()
+        self._rpc = _get_rpc()
+        settings = self._load_settings_sync()
+        if settings.get("enableRpc", True):
+            self._rpc.start()
+
+    def _load_settings_sync(self):
+        try:
+            portable = _load_portable_conf()
+            if portable:
+                return portable
+            roaming = os.getenv("APPDATA", "")
+            if roaming:
+                for folder in DISCORD_APPDATA_DIRS.values():
+                    conf_path = os.path.join(roaming, folder, "dcdns_conf.json")
+                    if os.path.isfile(conf_path):
+                        try:
+                            with open(conf_path, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                            if isinstance(data, dict):
+                                return data
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        return {}
 
     def set_window(self, window):
         self.window = window
@@ -2433,11 +2657,11 @@ class Api:
             resolved = DiscordDetector.resolve_index_js(raw_path)
             if not resolved:
                 return json.dumps({"error": "Could not find index.js"})
-            flavor       = DiscordDetector.guess_flavor(resolved)
-            version      = DiscordDetector._get_version(resolved)
-            status       = DiscordDetector.get_injection_status(resolved)
-            chrome_ver   = DiscordDetector._get_chrome_version(resolved)
-            sha256       = DiscordDetector.hash_file(resolved)
+            flavor     = DiscordDetector.guess_flavor(resolved)
+            version    = DiscordDetector._get_version(resolved)
+            status     = DiscordDetector.get_injection_status(resolved)
+            chrome_ver = DiscordDetector._get_chrome_version(resolved)
+            sha256     = DiscordDetector.hash_file(resolved)
             return json.dumps({
                 "flavor": flavor, "version": version, "path": resolved,
                 "injected": status["injected"], "dcdns_version": status["dcdns_version"],
@@ -2452,23 +2676,23 @@ class Api:
             "portable_path": _get_portable_conf_path() or "",
         })
 
+    def get_rpc_status(self):
+        return json.dumps({"active": self._rpc.is_active()})
+
+    def apply_rpc_setting(self, enabled):
+        try:
+            if enabled:
+                self._rpc.start()
+            else:
+                self._rpc.stop()
+        except Exception:
+            pass
+
     def load_settings(self):
         try:
-            portable = _load_portable_conf()
-            if portable:
-                return json.dumps(portable)
-            roaming = os.getenv("APPDATA", "")
-            if roaming:
-                for folder in DISCORD_APPDATA_DIRS.values():
-                    conf_path = os.path.join(roaming, folder, "dcdns_conf.json")
-                    if os.path.isfile(conf_path):
-                        try:
-                            with open(conf_path, "r", encoding="utf-8") as f:
-                                data = json.load(f)
-                            if isinstance(data, dict):
-                                return json.dumps(data)
-                        except Exception:
-                            continue
+            data = self._load_settings_sync()
+            if data:
+                return json.dumps(data)
         except Exception:
             pass
         return json.dumps({})
@@ -2510,6 +2734,7 @@ class Api:
     def close_app(self):
         try:
             self._running = False
+            self._rpc.stop()
             if self.window:
                 self.window.destroy()
         except Exception:
@@ -2608,7 +2833,7 @@ class Api:
 
             self._log("[4/7] Checking for existing payload...")
             if PAYLOAD_MARKER in content:
-                self._log("[!] Existing DcDNS payload detected — stripping before reinstall...")
+                self._log("[!] Existing DcDNS payload detected - stripping before reinstall...")
                 content = DiscordDetector.strip_payload(content)
 
             self._log("[5/7] Creating backup...")
@@ -2643,7 +2868,7 @@ class Api:
             if _write_discord_conf(flavor, settings):
                 self._log("[+] Config written to Discord AppData.")
             else:
-                self._log("[!] Could not write config file — payload will use baked defaults.")
+                self._log("[!] Could not write config file - payload will use baked defaults.")
 
             self._log("[6/7] Injecting DcDNS payload...")
             payload     = _build_payload(settings)
@@ -2663,7 +2888,7 @@ class Api:
             if DiscordDetector._is_injected(target):
                 self._log("[+] Payload verified in file.")
             else:
-                self._log("[X] Verification failed — payload not found after write.")
+                self._log("[X] Verification failed - payload not found after write.")
                 self._finish(False); return
 
             sha256 = DiscordDetector.hash_file(target)
@@ -2727,7 +2952,7 @@ class Api:
                     else:
                         self._log("[+] Backup integrity verified.")
                 else:
-                    self._log("[!] No SHA record found — skipping integrity check.")
+                    self._log("[!] No SHA record found - skipping integrity check.")
                 self._log("[3/6] Restoring from backup...")
                 shutil.copyfile(backup, target)
                 self._log("[+] File restored.")
@@ -2742,7 +2967,7 @@ class Api:
                 except OSError:
                     pass
             else:
-                self._log("[!] No backup — stripping payload manually...")
+                self._log("[!] No backup - stripping payload manually...")
                 if not os.path.isfile(target):
                     self._log("[X] Target file not found.")
                     self._finish(False); return
@@ -2776,7 +3001,7 @@ class Api:
                 self._log("=" * 40)
                 self._finish(True)
             else:
-                self._log("[X] Header still present after strip — manual cleanup needed.")
+                self._log("[X] Header still present after strip - manual cleanup needed.")
                 self._finish(False)
         except PermissionError:
             self._log("[X] Permission denied. Run as Administrator.")
