@@ -2,7 +2,7 @@
 # DcDNS
 # ==============================================================================
 # Author:      Larper.ru
-# Version:     v1.0.7
+# Version:     v1.0.8
 # License:     Custom Non-Commercial / No-Derivatives (Open Source - Read Only)
 # Repository:  https://github.com/larperru/DcDNS
 # Discord:     https://discord.gg/RNqC6eEQMR
@@ -42,7 +42,7 @@ except Exception:
 DISCORD_INVITE_URL = "https://discord.gg/9cu4Rf2ke2"
 WEBSITE_URL = "https://dcdns.pages.dev/"
 GITHUB_REPO_SLUG = "larperru/DcDNS"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 
 PAYLOAD_MARKER = "/* === [DcDNS Policy Framework"
 HEADER_TAG = "/* === [DcDNS Policy Framework v" + APP_VERSION + "] === */"
@@ -59,8 +59,6 @@ DISCORD_TELEMETRY_PATTERNS = [
     r"o\d+\.ingest\.sentry\.io",
     r"crash\.discord\.com",
     r"crash-reports\.discord\.com",
-    r"remote-auth-gateway\.discord\.gg",
-    r"discord\.gg/track",
     r"discord\.com/api/v\d+/science",
     r"discord\.com/api/v\d+/track",
     r"reporter\.discord\.com",
@@ -69,10 +67,8 @@ DISCORD_TELEMETRY_PATTERNS = [
     r"api\.mixpanel\.com",
     r"api\.segment\.io",
     r"api\.amplitude\.com",
-    r"click\.discord\.com",
     r"discord\.com/api/v\d+/events/stats",
     r"discord\.com/api/v\d+/analytics",
-    r"datadog-agent",
     r"browser-intake-datadoghq\.com",
 ]
 
@@ -143,7 +139,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
             /api\.mixpanel\.com/,
             /api\.segment\.io/,
             /api\.amplitude\.com/,
-            /click\.discord\.com/,
             /discord\.com\/api\/v\d+\/analytics/,
             /browser-intake-datadoghq\.com/
         ];
@@ -202,9 +197,10 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                 safeSwitch('no-crash-upload',       '1');
                 safeSwitch('disable-crash-reporter','1');
             }
-            var dohTemplate = encodeURIComponent(CUSTOM_DNS_PRIMARY) + ' ' + encodeURIComponent(CUSTOM_DNS_FALLBACK);
+            var dohPrimary = encodeURIComponent(CUSTOM_DNS_PRIMARY);
+            var dohFallback = encodeURIComponent(CUSTOM_DNS_FALLBACK);
             safeSwitch('enable-features',
-                'DnsOverHttps:Fallback/false/Templates/' + dohTemplate);
+                'DnsOverHttps:Fallback/false/Templates/' + dohPrimary + '%20' + dohFallback);
         }
 
         function applyDnsPolicy() {
@@ -263,12 +259,25 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
 
             try {
                 if (sess.webRequest && typeof sess.webRequest.onBeforeSendHeaders === 'function') {
-                    sess.webRequest.onBeforeSendHeaders(function(details, callback) {
+                    sess.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, function(details, callback) {
                         try {
                             var headers = details.requestHeaders || {};
                             delete headers['X-Client-Data'];
                             delete headers['X-Goog-Visitor-Id'];
                             delete headers['X-Firebase-Client'];
+                            if (STRIP_REFERRER) {
+                                var ref = headers['Referer'] || headers['referer'] || '';
+                                if (ref) {
+                                    try {
+                                        var u = new URL(ref);
+                                        headers['Referer'] = u.origin + '/';
+                                        delete headers['referer'];
+                                    } catch (e) {
+                                        delete headers['Referer'];
+                                        delete headers['referer'];
+                                    }
+                                }
+                            }
                             callback({ requestHeaders: headers });
                         } catch (e) { try { callback({}); } catch (e2) {} }
                     });
@@ -277,7 +286,7 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
 
             try {
                 if (sess.webRequest && typeof sess.webRequest.onBeforeRequest === 'function') {
-                    sess.webRequest.onBeforeRequest(function(details, callback) {
+                    sess.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, function(details, callback) {
                         try {
                             var url = details.url || '';
                             if (isTelemetryUrl(url) || isCrashUrl(url) || isRemoteAuthUrl(url)) {
@@ -320,32 +329,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                     }
                 } catch (e) {}
             }
-
-            if (STRIP_REFERRER) {
-                try {
-                    if (sess.webRequest && typeof sess.webRequest.onBeforeSendHeaders === 'function') {
-                        sess.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, function(details, callback) {
-                            try {
-                                var headers = details.requestHeaders || {};
-                                delete headers['X-Client-Data'];
-                                delete headers['X-Goog-Visitor-Id'];
-                                delete headers['X-Firebase-Client'];
-                                var ref = headers['Referer'] || headers['referer'] || '';
-                                if (ref) {
-                                    try {
-                                        var u = new URL(ref);
-                                        headers['Referer'] = u.origin + '/';
-                                    } catch (e) {
-                                        delete headers['Referer'];
-                                        delete headers['referer'];
-                                    }
-                                }
-                                callback({ requestHeaders: headers });
-                            } catch (e) { try { callback({}); } catch (e2) {} }
-                        });
-                    }
-                } catch (e) {}
-            }
         }
 
         var DCDNS_FINGERPRINT_SCRIPT = (function() {
@@ -355,17 +338,6 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
             if (SPOOF_CANVAS) {
                 parts.push(
                     'try{' +
-                    'var _oc=HTMLCanvasElement.prototype.toDataURL;' +
-                    'HTMLCanvasElement.prototype.toDataURL=function(){' +
-                    'var d=_oc.apply(this,arguments);' +
-                    'if(!d||d.length<100)return d;' +
-                    'var n=Math.random()*0.0004-0.0002;' +
-                    'return d.slice(0,-4)+(n>0?"1":"0")+"===";' +
-                    '};' +
-                    'var _ob=HTMLCanvasElement.prototype.toBlob;' +
-                    'HTMLCanvasElement.prototype.toBlob=function(cb,t,q){' +
-                    'return _ob.call(this,cb,t,q);' +
-                    '};' +
                     'var _og=CanvasRenderingContext2D.prototype.getImageData;' +
                     'CanvasRenderingContext2D.prototype.getImageData=function(x,y,w,h){' +
                     'var d=_og.apply(this,arguments);' +
@@ -374,6 +346,20 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
                     'd.data[idx]=(d.data[idx]+1)%256;' +
                     '}' +
                     'return d;' +
+                    '};' +
+                    'var _oc=HTMLCanvasElement.prototype.toDataURL;' +
+                    'HTMLCanvasElement.prototype.toDataURL=function(){' +
+                    'var ctx=this.getContext("2d");' +
+                    'if(ctx){' +
+                    'var id=ctx.getImageData(0,0,1,1);' +
+                    'id.data[0]=(id.data[0]+1)%256;' +
+                    'ctx.putImageData(id,0,0);' +
+                    'var r=_oc.apply(this,arguments);' +
+                    'id.data[0]=(id.data[0]+255)%256;' +
+                    'ctx.putImageData(id,0,0);' +
+                    'return r;' +
+                    '}' +
+                    'return _oc.apply(this,arguments);' +
                     '};' +
                     '}catch(e){}'
                 );
@@ -578,15 +564,39 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
 
         function patchDiscordCrashHandlers(contents) {
             try {
-                if (!contents || typeof contents.isDestroyed === 'function' && contents.isDestroyed()) return;
+                if (!contents || (typeof contents.isDestroyed === 'function' && contents.isDestroyed())) return;
                 var crashPatch = '(function(){\n' +
 '  try {\n' +
 '    if (window.__dcdnsCrashPatched) return;\n' +
 '    window.__dcdnsCrashPatched = true;\n' +
+'    var SUPPRESSED_PATTERNS = [\n' +
+'      "game", "GamepadPolling", "RPCServer", "ipcRenderer",\n' +
+'      "Cannot read properties of undefined",\n' +
+'      "Cannot read property",\n' +
+'      "ResizeObserver loop",\n' +
+'      "NetworkError",\n' +
+'      "Failed to fetch",\n' +
+'      "Load failed"\n' +
+'    ];\n' +
 '    window.addEventListener("unhandledrejection", function(e) {\n' +
 '      try {\n' +
-'        if (e && e.reason && String(e.reason).indexOf("game") !== -1) {\n' +
-'          e.preventDefault(); return;\n' +
+'        if (!e || !e.reason) return;\n' +
+'        var msg = String(e.reason.message || e.reason);\n' +
+'        for (var i = 0; i < SUPPRESSED_PATTERNS.length; i++) {\n' +
+'          if (msg.indexOf(SUPPRESSED_PATTERNS[i]) !== -1) {\n' +
+'            e.preventDefault();\n' +
+'            return;\n' +
+'          }\n' +
+'        }\n' +
+'      } catch(x) {}\n' +
+'    }, true);\n' +
+'    window.addEventListener("error", function(e) {\n' +
+'      try {\n' +
+'        if (!e) return;\n' +
+'        var msg = String(e.message || "");\n' +
+'        if (msg.indexOf("ResizeObserver loop") !== -1) {\n' +
+'          e.stopImmediatePropagation();\n' +
+'          e.preventDefault();\n' +
 '        }\n' +
 '      } catch(x) {}\n' +
 '    }, true);\n' +
@@ -598,7 +608,7 @@ _DCDNS_PAYLOAD_BODY = r"""(function() {
 
         function attachLabelInjector(contents) {
             try {
-                if (!contents || typeof contents.isDestroyed === 'function' && contents.isDestroyed()) return;
+                if (!contents || (typeof contents.isDestroyed === 'function' && contents.isDestroyed())) return;
                 dcdnsKnownContents.push(contents);
                 contents.on('dom-ready', function() {
                     try { if (contents.isDestroyed()) return; } catch(e) { return; }
@@ -819,11 +829,15 @@ def _get_exe_dir():
 
 
 def load_logo():
-    search_dirs = list(dict.fromkeys([
-        os.path.dirname(os.path.abspath(__file__)),
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+    except Exception:
+        script_dir = ""
+    search_dirs = list(dict.fromkeys([d for d in [
+        script_dir,
         _get_exe_dir(),
         os.getcwd(),
-    ]))
+    ] if d]))
     for base_dir in search_dirs:
         for name in ("logo.png", "logo.ico", "logo.jpg"):
             logo_path = os.path.join(base_dir, name)
@@ -1621,7 +1635,7 @@ function scanAll() {
 
 function selectFlavor(flavor) {
   try {
-    document.querySelectorAll('.discord-card').forEach(function(c) { c.classList.remove('selected'); });
+    try { document.querySelectorAll('.discord-card').forEach(function(c) { c.classList.remove('selected'); }); } catch(e) {}
     var card        = document.querySelector('.discord-card[data-flavor="' + flavor + '"]');
     var statusEl    = safeEl('install-status');
     var warnEl      = safeEl('update-warning');
@@ -1630,45 +1644,56 @@ function selectFlavor(flavor) {
     var verifyRow   = safeEl('verify-row');
     var verifyHash  = safeEl('verify-hash');
     var verifyBadge = safeEl('verify-badge');
-    if (!card || !card.dataset.path) {
+    if (!card || !card.dataset || !card.dataset.path) {
       if (statusEl) { statusEl.textContent = 'This client is not installed.'; statusEl.className = 'status err'; }
-      if (warnEl)    warnEl.style.display    = 'none';
-      if (verifyRow) verifyRow.style.display = 'none';
+      if (warnEl)    { try { warnEl.style.display    = 'none'; } catch(e) {} }
+      if (verifyRow) { try { verifyRow.style.display = 'none'; } catch(e) {} }
       window.selectedInstall = null;
-      if (installBtn)   installBtn.disabled   = true;
-      if (uninstallBtn) uninstallBtn.disabled = true;
+      if (installBtn)   { try { installBtn.disabled   = true; } catch(e) {} }
+      if (uninstallBtn) { try { uninstallBtn.disabled = true; } catch(e) {} }
       return;
     }
-    card.classList.add('selected');
-    var isInjected  = card.dataset.injected   === '1';
-    var isUpToDate  = card.dataset.upToDate   === '1';
-    var dcdnsVersion= card.dataset.dcdnsVersion || '?';
-    var sha256      = card.dataset.sha256 || '';
-    window.selectedInstall = { flavor: flavor, path: card.dataset.path, version: card.dataset.version, injected: isInjected };
-    var dcNameEl = card ? card.querySelector('.dc-name') : null;
+    try { card.classList.add('selected'); } catch(e) {}
+    var isInjected   = card.dataset.injected    === '1';
+    var isUpToDate   = card.dataset.upToDate    === '1';
+    var dcdnsVersion = card.dataset.dcdnsVersion || '?';
+    var sha256       = card.dataset.sha256       || '';
+    window.selectedInstall = {
+      flavor:   flavor,
+      path:     card.dataset.path    || '',
+      version:  card.dataset.version || '',
+      injected: isInjected
+    };
+    var dcNameEl    = card.querySelector('.dc-name');
     var displayName = (dcNameEl && dcNameEl.textContent) ? dcNameEl.textContent : flavor;
-    if (verifyRow) verifyRow.style.display = sha256 ? '' : 'none';
-    if (verifyHash) verifyHash.textContent = sha256 ? 'SHA-256: ' + sha256 : '';
-    if (verifyBadge) {
-      if (sha256) {
-        verifyBadge.textContent = 'Verified';
-        verifyBadge.className = 'verify-badge ok';
-      } else {
-        verifyBadge.textContent = 'Not verified';
-        verifyBadge.className = 'verify-badge none';
+    try {
+      if (verifyRow)  verifyRow.style.display  = sha256 ? '' : 'none';
+      if (verifyHash) verifyHash.textContent   = sha256 ? 'SHA-256: ' + sha256 : '';
+      if (verifyBadge) {
+        if (sha256) {
+          verifyBadge.textContent = 'Verified';
+          verifyBadge.className   = 'verify-badge ok';
+        } else {
+          verifyBadge.textContent = 'Not verified';
+          verifyBadge.className   = 'verify-badge none';
+        }
       }
-    }
-    if (isInjected) {
-      var msg = displayName + ': DcDNS v' + dcdnsVersion + ' installed';
-      if (!isUpToDate) msg += ' (outdated - reinstall recommended)';
-      if (statusEl) { statusEl.textContent = msg; statusEl.className = isUpToDate ? 'status ok' : 'status warn'; }
-      if (warnEl) warnEl.style.display = '';
-    } else {
-      if (statusEl) { statusEl.textContent = displayName + ': Ready to install'; statusEl.className = 'status ok'; }
-      if (warnEl) warnEl.style.display = 'none';
-    }
-    if (installBtn)   installBtn.disabled   = false;
-    if (uninstallBtn) uninstallBtn.disabled = !isInjected;
+    } catch(e) {}
+    try {
+      if (isInjected) {
+        var msg = displayName + ': DcDNS v' + dcdnsVersion + ' installed';
+        if (!isUpToDate) msg += ' (outdated - reinstall recommended)';
+        if (statusEl) { statusEl.textContent = msg; statusEl.className = isUpToDate ? 'status ok' : 'status warn'; }
+        if (warnEl)   warnEl.style.display = '';
+      } else {
+        if (statusEl) { statusEl.textContent = displayName + ': Ready to install'; statusEl.className = 'status ok'; }
+        if (warnEl)   warnEl.style.display = 'none';
+      }
+    } catch(e) {}
+    try {
+      if (installBtn)   installBtn.disabled   = false;
+      if (uninstallBtn) uninstallBtn.disabled = !isInjected;
+    } catch(e) {}
   } catch(e) {}
 }
 
@@ -1779,17 +1804,17 @@ safeBind('btn-install', 'click', function() {
             }).catch(function() {});
           } else if (res === 'busy') {
             addLog('[!] Another operation is already running.');
-            finishLog(false);
+            finishLog(false, false);
           } else if (res === 'invalid') {
             addLog('[X] Invalid installation target.');
-            finishLog(false);
+            finishLog(false, false);
           }
         } catch(re) {}
       }).catch(function(err) {
-        try { addLog('[X] Install call failed: ' + (err ? String(err) : 'unknown')); finishLog(false); } catch(e) {}
+        try { addLog('[X] Install call failed: ' + (err ? String(err) : 'unknown')); finishLog(false, false); } catch(e) {}
       });
     } catch(e) {
-      try { addLog('[X] Could not contact backend.'); finishLog(false); } catch(ie) {}
+      try { addLog('[X] Could not contact backend.'); finishLog(false, false); } catch(ie) {}
     }
   }, 20);
 });
@@ -1805,14 +1830,14 @@ safeBind('btn-uninstall', 'click', function() {
     try {
       window.pywebview.api.uninstall(JSON.stringify(window.selectedInstall)).then(function(res) {
         try {
-          if (res === 'busy') { addLog('[!] Another operation is already running.'); finishLog(false); }
-          else if (res === 'invalid') { addLog('[X] Invalid installation target.'); finishLog(false); }
+          if (res === 'busy') { addLog('[!] Another operation is already running.'); finishLog(false, false); }
+          else if (res === 'invalid') { addLog('[X] Invalid installation target.'); finishLog(false, false); }
         } catch(e) {}
       }).catch(function(err) {
-        try { addLog('[X] Uninstall call failed: ' + (err ? String(err) : 'unknown')); finishLog(false); } catch(e) {}
+        try { addLog('[X] Uninstall call failed: ' + (err ? String(err) : 'unknown')); finishLog(false, false); } catch(e) {}
       });
     } catch(e) {
-      try { addLog('[X] Could not contact backend.'); finishLog(false); } catch(ie) {}
+      try { addLog('[X] Could not contact backend.'); finishLog(false, false); } catch(ie) {}
     }
   }, 20);
 });
@@ -1825,21 +1850,38 @@ safeBind('btn-restart', 'click', function() {
     try {
       window.pywebview.api.restart_discord(JSON.stringify(window.selectedInstall)).then(function(res) {
         try {
-          if (res === 'busy') { addLog('[!] Another operation is already running.'); finishLog(false); }
-          else if (res === 'invalid') { addLog('[X] Invalid target.'); finishLog(false); }
+          if (res === 'busy') { addLog('[!] Another operation is already running.'); finishLog(false, false); }
+          else if (res === 'invalid') { addLog('[X] Invalid target.'); finishLog(false, false); }
         } catch(e) {}
       }).catch(function(err) {
-        try { addLog('[X] Restart call failed: ' + (err ? String(err) : 'unknown')); finishLog(false); } catch(e) {}
+        try { addLog('[X] Restart call failed: ' + (err ? String(err) : 'unknown')); finishLog(false, false); } catch(e) {}
       });
     } catch(e) {
-      try { addLog('[X] Could not contact backend.'); finishLog(false); } catch(ie) {}
+      try { addLog('[X] Could not contact backend.'); finishLog(false, false); } catch(ie) {}
     }
   }, 20);
 });
 
 safeBind('btn-back2', 'click', function() {
+  var prevInstall = window.selectedInstall;
+  window.selectedInstall = null;
+  var installBtn   = safeEl('btn-install');
+  var uninstallBtn = safeEl('btn-uninstall');
+  var restartBtn   = safeEl('btn-restart');
+  var back2        = safeEl('btn-back2');
+  var doneBtn      = safeEl('btn-done');
+  var statusEl     = safeEl('install-status');
+  if (installBtn)   installBtn.disabled   = true;
+  if (uninstallBtn) uninstallBtn.disabled = true;
+  if (restartBtn)   restartBtn.disabled   = true;
+  if (back2)        back2.disabled        = true;
+  if (doneBtn)      doneBtn.disabled      = true;
+  if (statusEl)     { statusEl.textContent = ''; statusEl.className = 'status'; }
   showPage('install');
   scanAll();
+  if (prevInstall && prevInstall.flavor) {
+    setTimeout(function() { try { selectFlavor(prevInstall.flavor); } catch(e) {} }, 600);
+  }
 });
 
 function addLog(msg) {
@@ -1859,15 +1901,15 @@ function addLog(msg) {
   } catch(e) {}
 }
 
-function finishLog(ok) {
+function finishLog(ok, showRestart) {
   try {
     var back2   = safeEl('btn-back2');
     var done    = safeEl('btn-done');
     var restart = safeEl('btn-restart');
     var logTitle= safeEl('log-title');
-    if (back2)    { try { back2.disabled   = false; } catch(e) {} }
-    if (done)     { try { done.disabled    = false; } catch(e) {} }
-    if (restart)  { try { restart.disabled = !ok;   } catch(e) {} }
+    if (back2)   { try { back2.disabled   = false; } catch(e) {} }
+    if (done)    { try { done.disabled    = false; } catch(e) {} }
+    if (restart) { try { restart.disabled = !(ok && showRestart !== false); } catch(e) {} }
     if (logTitle) { try { logTitle.textContent = ok ? 'Operation Complete' : 'Operation Failed'; } catch(e) {} }
   } catch(e) {}
 }
@@ -2142,8 +2184,10 @@ def _build_payload(settings):
     conf_json = json.dumps(conf, separators=(",", ":"))
     baked = "var __conf = Object.assign({}, " + conf_json + ", (function(){var r=readConf();return r&&typeof r==='object'?r:{};}()));"
     result = payload.replace(marker, baked, 1)
-    if result.count(marker) > 0 or result.count("var __conf = Object.assign") != 1:
-        raise RuntimeError("Payload bake produced unexpected output - aborting")
+    if result.count(marker) > 0:
+        raise RuntimeError("Payload bake produced unexpected output - original marker still present")
+    if baked not in result:
+        raise RuntimeError("Payload bake failed - baked string not found in result")
     return result
 
 
@@ -2580,6 +2624,24 @@ class DiscordDetector:
         return {"injected": True, "dcdns_version": injected_version, "up_to_date": up_to_date}
 
     @staticmethod
+    def classify_target(path):
+        result = {"status": "ok", "stub": False, "injected": False}
+        try:
+            if not path or not os.path.isfile(path):
+                result["status"] = "missing"
+                return result
+            size = os.path.getsize(path)
+            if size < 512:
+                result["stub"] = True
+                return result
+            content = DiscordDetector.read_text(path)
+            if PAYLOAD_MARKER in content:
+                result["injected"] = True
+        except Exception:
+            result["status"] = "error"
+        return result
+
+    @staticmethod
     def strip_payload(content):
         if not content:
             return content
@@ -2719,50 +2781,6 @@ class DiscordDetector:
             return True
         except Exception:
             return False
-
-    @staticmethod
-    def is_valid_discord_target(path):
-        if not path or not os.path.isfile(path):
-            return False, "File does not exist"
-        try:
-            size = os.path.getsize(path)
-        except OSError as e:
-            return False, "Cannot stat file: " + str(e)
-        if size == 0:
-            return False, "File is empty"
-        if size < 512:
-            return False, "File is too small to be a valid index.js (" + str(size) + " bytes)"
-        norm = path.replace("\\", "/").lower()
-        if "discord" not in norm:
-            return False, "Path does not contain 'discord' - not a Discord installation"
-        if not norm.endswith("index.js"):
-            return False, "Target must be index.js"
-        if "discord_desktop_core" not in norm and "app.asar.unpacked" not in norm:
-            return False, "Path does not look like a Discord core module"
-        try:
-            with open(path, "r", encoding="utf-8", errors="surrogateescape") as f:
-                head = f.read(4096)
-        except OSError as e:
-            return False, "Cannot read file: " + str(e)
-        if PAYLOAD_MARKER in head:
-            return True, "OK"
-        discord_signatures = [
-            "require(",
-            "module.exports",
-            "electron",
-            "discord",
-        ]
-        matched = sum(1 for sig in discord_signatures if sig.lower() in head.lower())
-        if matched < 2:
-            try:
-                with open(path, "r", encoding="utf-8", errors="surrogateescape") as f:
-                    full = f.read(65536)
-                matched = sum(1 for sig in discord_signatures if sig.lower() in full.lower())
-            except Exception:
-                pass
-        if matched < 2:
-            return False, "File content does not look like a Discord Electron module"
-        return True, "OK"
 
     @staticmethod
     def _get_pids_by_names(names):
@@ -3078,8 +3096,10 @@ class Api:
                 .replace("\n", " "))
         self._safe_js("try{addLog(`" + safe + "`)}catch(e){}")
 
-    def _finish(self, ok):
-        self._safe_js("try{finishLog(" + ("true" if ok else "false") + ")}catch(e){}")
+    def _finish(self, ok, show_restart=True):
+        js_ok = "true" if ok else "false"
+        js_sr = "true" if show_restart else "false"
+        self._safe_js("try{finishLog(" + js_ok + "," + js_sr + ")}catch(e){}")
 
     @staticmethod
     def _discord_is_present():
@@ -3291,7 +3311,10 @@ class Api:
         inst = self._pending_install
         self._pending_install = None
         if not inst:
-            self._op_lock.release()
+            try:
+                self._op_lock.release()
+            except RuntimeError:
+                pass
             return "invalid"
         overwrite = choice == "overwrite"
         threading.Thread(target=self._run_install, args=(inst, overwrite), daemon=True).start()
@@ -3333,19 +3356,16 @@ class Api:
         flavor   = inst.get("flavor", "DISCORD")
         settings = inst.get("settings", {})
         backup   = target + ".dcdns.bak"
+        bak_sha_file = backup + ".sha256"
         self._log("=" * 40)
         self._log("INSTALL -> " + flavor)
         self._log("=" * 40)
         try:
-            self._log("[1/7] Validating target file...")
+            self._log("[1/7] Checking target file...")
             if not os.path.isfile(target):
                 self._log("[X] Target file not found: " + target)
-                self._finish(False); return
-            valid, reason = DiscordDetector.is_valid_discord_target(target)
-            if not valid:
-                self._log("[X] Tamper / sanity check failed: " + reason)
-                self._finish(False); return
-            self._log("[+] Target validated: " + os.path.basename(target))
+                self._finish(False, show_restart=False); return
+            self._log("[+] Target: " + os.path.basename(target))
 
             self._log("[2/7] Closing running Discord processes...")
             names  = PROCESS_NAMES.get(flavor, PROCESS_NAMES["DISCORD"])
@@ -3357,37 +3377,35 @@ class Api:
                 self._log("[!] No running process detected.")
 
             self._log("[3/7] Reading target file...")
-            content = DiscordDetector.read_text(target)
+            try:
+                content = DiscordDetector.read_text(target)
+            except OSError as read_err:
+                self._log("[X] Cannot read target file: " + str(read_err))
+                self._finish(False, show_restart=False); return
 
             self._log("[4/7] Checking for existing payload...")
             if PAYLOAD_MARKER in content:
                 injected_ver = DiscordDetector.get_injected_version(target)
                 if injected_ver and DiscordDetector._version_key(injected_ver) >= DiscordDetector._version_key(APP_VERSION):
-                    self._log("[!] DcDNS v" + injected_ver + " already installed and up to date - reinstalling anyway...")
+                    self._log("[!] DcDNS v" + injected_ver + " already installed - reinstalling...")
                 elif injected_ver:
-                    self._log("[!] Outdated DcDNS v" + injected_ver + " detected - upgrading to v" + APP_VERSION + "...")
+                    self._log("[!] Outdated DcDNS v" + injected_ver + " found - upgrading to v" + APP_VERSION + "...")
                 else:
-                    self._log("[!] Existing DcDNS payload detected - replacing...")
+                    self._log("[!] Existing payload detected - replacing...")
 
-                bak_try = target + ".dcdns.bak"
                 clean_content = None
-
-                if os.path.isfile(bak_try):
+                if os.path.isfile(backup):
                     try:
-                        bak_content = DiscordDetector.read_text(bak_try)
+                        bak_content = DiscordDetector.read_text(backup)
                         if PAYLOAD_MARKER not in bak_content and bak_content.strip():
                             clean_content = bak_content
-                            self._log("[+] Using backup as clean base.")
+                            self._log("[+] Using clean backup as base.")
                         elif PAYLOAD_MARKER in bak_content:
-                            self._log("[!] Backup is also injected - attempting to strip backup...")
-                            stripped_bak, strip_bak_reason = DiscordDetector.strip_payload_safe(bak_content)
-                            if stripped_bak is not None:
+                            self._log("[!] Backup also injected - stripping...")
+                            stripped_bak, _ = DiscordDetector.strip_payload_safe(bak_content)
+                            if stripped_bak is not None and stripped_bak.strip():
                                 clean_content = stripped_bak
-                                self._log("[+] Backup stripped successfully - using as clean base.")
-                            else:
-                                self._log("[!] Could not strip backup (" + strip_bak_reason + ") - will strip from live file.")
-                        else:
-                            self._log("[!] Backup appears invalid - will strip from file directly.")
+                                self._log("[+] Backup stripped - using as base.")
                     except Exception as bak_ex:
                         self._log("[!] Could not read backup: " + str(bak_ex))
 
@@ -3395,22 +3413,50 @@ class Api:
                     stripped, strip_reason = DiscordDetector.strip_payload_safe(content)
                     if stripped is not None:
                         clean_content = stripped
-                        self._log("[+] Payload stripped from live file successfully.")
+                        self._log("[+] Payload stripped from live file.")
                     else:
                         self._log("[X] Strip failed: " + strip_reason)
-                        self._log("[X] No clean source available - aborting to protect your installation.")
-                        self._finish(False); return
+                        self._finish(False, show_restart=False); return
 
                 content = clean_content
-                if PAYLOAD_MARKER in content:
-                    self._log("[X] Payload marker still present after cleanup - aborting.")
-                    self._finish(False); return
-                self._log("[+] Base file is clean - ready for injection.")
+                self._log("[+] Base file is clean.")
+            else:
+                size = os.path.getsize(target)
+                if size < 512:
+                    self._log("[!] File is small (" + str(size) + " bytes) - Discord may have reset it after an update.")
+                    if os.path.isfile(backup):
+                        try:
+                            bak_content = DiscordDetector.read_text(backup)
+                            if PAYLOAD_MARKER not in bak_content and bak_content.strip() and len(bak_content) > 512:
+                                content = bak_content
+                                self._log("[+] Using clean backup as base instead.")
+                            elif PAYLOAD_MARKER in bak_content:
+                                stripped_bak, _ = DiscordDetector.strip_payload_safe(bak_content)
+                                if stripped_bak and len(stripped_bak) > 512:
+                                    content = stripped_bak
+                                    self._log("[+] Stripped backup as base.")
+                        except Exception:
+                            pass
+                self._log("[+] No existing payload found.")
 
             self._log("[5/7] Creating backup...")
-            bak_sha_file = backup + ".sha256"
             if os.path.exists(backup):
                 if overwrite_backup:
+                    try:
+                        shutil.copyfile(target, backup)
+                        bak_sha = DiscordDetector.hash_file(backup)
+                        try:
+                            with open(bak_sha_file, "w", encoding="utf-8") as f:
+                                f.write(bak_sha)
+                        except OSError:
+                            pass
+                        self._log("[+] Backup overwritten.")
+                    except OSError as bak_err:
+                        self._log("[!] Could not overwrite backup: " + str(bak_err))
+                else:
+                    self._log("[!] Keeping existing backup.")
+            else:
+                try:
                     shutil.copyfile(target, backup)
                     bak_sha = DiscordDetector.hash_file(backup)
                     try:
@@ -3418,28 +3464,15 @@ class Api:
                             f.write(bak_sha)
                     except OSError:
                         pass
-                    self._log("[+] Backup overwritten: " + os.path.basename(backup))
-                    if bak_sha:
-                        self._log("[+] Backup SHA-256: " + bak_sha)
-                else:
-                    self._log("[!] Keeping existing backup.")
-            else:
-                shutil.copyfile(target, backup)
-                bak_sha = DiscordDetector.hash_file(backup)
-                try:
-                    with open(bak_sha_file, "w", encoding="utf-8") as f:
-                        f.write(bak_sha)
-                except OSError:
-                    pass
-                self._log("[+] Backup created: " + os.path.basename(backup))
-                if bak_sha:
-                    self._log("[+] Backup SHA-256: " + bak_sha)
+                    self._log("[+] Backup created: " + os.path.basename(backup))
+                except OSError as bak_err:
+                    self._log("[!] Could not create backup: " + str(bak_err))
 
             self._log("[5b/7] Writing config to Discord AppData...")
             if _write_discord_conf(flavor, settings):
-                self._log("[+] Config written to Discord AppData.")
+                self._log("[+] Config written.")
             else:
-                self._log("[!] Could not write config file - payload will use baked defaults.")
+                self._log("[!] Could not write config - payload will use baked defaults.")
 
             self._log("[6/7] Injecting DcDNS payload...")
             payload     = _build_payload(settings)
@@ -3460,7 +3493,7 @@ class Api:
                 self._log("[+] Payload verified in file.")
             else:
                 self._log("[X] Verification failed - payload not found after write.")
-                self._finish(False); return
+                self._finish(False, show_restart=False); return
 
             sha256 = DiscordDetector.hash_file(target)
             if sha256:
@@ -3479,10 +3512,10 @@ class Api:
             self._finish(True)
         except PermissionError:
             self._log("[X] Permission denied. Run as Administrator.")
-            self._finish(False)
+            self._finish(False, show_restart=False)
         except Exception as ex:
             self._log("[X] FATAL: " + str(ex))
-            self._finish(False)
+            self._finish(False, show_restart=False)
 
     def _run_uninstall(self, inst):
         try:
@@ -3497,9 +3530,49 @@ class Api:
         target = inst.get("path", "")
         flavor = inst.get("flavor", "DISCORD")
         backup = target + ".dcdns.bak"
+        bak_sha_file = backup + ".sha256"
         self._log("=" * 40)
         self._log("UNINSTALL -> " + flavor)
         self._log("=" * 40)
+
+        def _cleanup_sidecar():
+            try:
+                if os.path.exists(bak_sha_file):
+                    os.remove(bak_sha_file)
+            except OSError:
+                pass
+
+        def _remove_dcdns_conf(flav):
+            try:
+                roaming = os.getenv("APPDATA", "")
+                if not roaming:
+                    return
+                folder = DISCORD_APPDATA_DIRS.get(flav, "discord")
+                conf_path = os.path.join(roaming, folder, "dcdns_conf.json")
+                if os.path.isfile(conf_path):
+                    try:
+                        os.remove(conf_path)
+                        self._log("[+] Config file removed.")
+                    except OSError as ce:
+                        self._log("[!] Could not remove config: " + str(ce))
+            except Exception:
+                pass
+
+        def _launch_and_finish(ok):
+            _remove_dcdns_conf(flavor)
+            if not DiscordDetector._is_injected(target):
+                self._log("[5/6] Launching Discord...")
+                launched_pid = DiscordDetector.launch_client(target, flavor)
+                if launched_pid:
+                    self._log("[+] Discord launched (launcher PID " + str(launched_pid) + ").")
+                else:
+                    self._log("[!] Could not auto-launch. Start Discord manually.")
+            self._log("[6/6] Done.")
+            self._log("=" * 40)
+            self._log("UNINSTALL COMPLETE!")
+            self._log("=" * 40)
+            self._finish(ok, show_restart=False)
+
         try:
             self._log("[1/6] Closing running Discord processes...")
             names  = PROCESS_NAMES.get(flavor, PROCESS_NAMES["DISCORD"])
@@ -3510,9 +3583,41 @@ class Api:
             else:
                 self._log("[!] No running process detected.")
 
+            self._log("[2/6] Checking target and backup state...")
+            target_r = DiscordDetector.classify_target(target)
+            has_backup = os.path.isfile(backup)
+
+            if target_r["status"] == "missing":
+                self._log("[X] Target file not found: " + target)
+                self._finish(False, show_restart=False); return
+
+            if target_r["stub"]:
+                self._log("[!] index.js is a stub - Discord already reset it after an update.")
+                self._log("[+] DcDNS is no longer active in this file.")
+                _cleanup_sidecar()
+                if has_backup:
+                    bak_r = DiscordDetector.classify_target(backup)
+                    if not bak_r["stub"]:
+                        self._log("[3/6] Restoring clean backup...")
+                        shutil.copyfile(backup, target)
+                        self._log("[+] Backup restored to index.js.")
+                        try:
+                            os.remove(backup)
+                            self._log("[+] Backup removed.")
+                        except Exception as re_ex:
+                            self._log("[!] Could not remove backup: " + str(re_ex))
+                    else:
+                        self._log("[!] Backup is also a stub - nothing to restore.")
+                        try:
+                            os.remove(backup)
+                        except OSError:
+                            pass
+                _cleanup_sidecar()
+                _launch_and_finish(True)
+                return
+
             self._log("[2/6] Looking for backup...")
-            bak_sha_file = backup + ".sha256"
-            if os.path.exists(backup):
+            if has_backup:
                 self._log("[2b/6] Verifying backup integrity...")
                 expected_sha = ""
                 try:
@@ -3523,48 +3628,43 @@ class Api:
                 if expected_sha:
                     actual_sha = DiscordDetector.hash_file(backup)
                     if actual_sha and actual_sha != expected_sha:
-                        self._log("[!] WARNING: Backup file SHA-256 mismatch!")
+                        self._log("[!] WARNING: Backup SHA-256 mismatch!")
                         self._log("[!] Expected: " + expected_sha)
                         self._log("[!] Got:      " + actual_sha)
-                        self._log("[!] Backup may have been modified by another program.")
-                        self._log("[!] Aborting restore to protect your installation.")
-                        self._finish(False)
+                        self._log("[!] Backup may have been tampered with - aborting restore.")
+                        self._finish(False, show_restart=False)
                         return
                     else:
                         self._log("[+] Backup integrity verified.")
                 else:
-                    self._log("[!] No SHA record found - skipping integrity check.")
-                self._log("[3/6] Restoring from backup...")
-                shutil.copyfile(backup, target)
-                self._log("[+] File restored.")
-                try:
-                    os.remove(backup)
-                    self._log("[+] Backup removed.")
-                except Exception as rem_ex:
-                    self._log("[!] Could not remove backup: " + str(rem_ex))
-                try:
-                    if os.path.exists(bak_sha_file):
-                        os.remove(bak_sha_file)
-                except OSError:
-                    pass
-            else:
-                self._log("[!] No backup - stripping payload manually...")
-                if not os.path.isfile(target):
-                    self._log("[X] Target file not found.")
-                    self._finish(False); return
-                valid, reason = DiscordDetector.is_valid_discord_target(target)
-                if not valid:
-                    self._log("[X] Tamper / sanity check failed: " + reason)
-                    self._finish(False); return
+                    self._log("[!] No SHA record - skipping integrity check.")
+
+                bak_r = DiscordDetector.classify_target(backup)
+                if bak_r["stub"]:
+                    self._log("[!] Backup is a stub - falling back to payload strip.")
+                    has_backup = False
+                else:
+                    self._log("[3/6] Restoring from backup...")
+                    shutil.copyfile(backup, target)
+                    self._log("[+] File restored.")
+                    try:
+                        os.remove(backup)
+                        self._log("[+] Backup removed.")
+                    except Exception as rem_ex:
+                        self._log("[!] Could not remove backup: " + str(rem_ex))
+                    _cleanup_sidecar()
+
+            if not has_backup:
+                self._log("[!] No backup - stripping payload from live file...")
                 content = DiscordDetector.read_text(target)
                 if PAYLOAD_MARKER in content:
                     cleaned, strip_reason = DiscordDetector.strip_payload_safe(content)
                     if cleaned is None:
                         self._log("[X] Strip failed: " + strip_reason)
-                        self._finish(False); return
+                        self._finish(False, show_restart=False); return
                     if PAYLOAD_MARKER in cleaned:
-                        self._log("[X] Payload marker still present after strip - aborting.")
-                        self._finish(False); return
+                        self._log("[X] Payload still present after strip - aborting.")
+                        self._finish(False, show_restart=False); return
                     for attempt in range(5):
                         try:
                             DiscordDetector.write_text(target, cleaned)
@@ -3577,30 +3677,23 @@ class Api:
                                 raise lock_err
                     self._log("[+] Payload stripped.")
                 else:
-                    self._log("[!] No DcDNS payload found in file.")
+                    self._log("[!] No DcDNS payload found in file - already clean.")
+                _cleanup_sidecar()
 
             self._log("[4/6] Verifying...")
-            if not DiscordDetector._is_injected(target):
-                self._log("[5/6] Launching Discord...")
-                launched_pid = DiscordDetector.launch_client(target, flavor)
-                if launched_pid:
-                    self._log("[+] Discord launched (launcher PID " + str(launched_pid) + ").")
-                else:
-                    self._log("[!] Could not auto-launch. Start Discord manually.")
-                self._log("[6/6] Done.")
-                self._log("=" * 40)
-                self._log("UNINSTALL COMPLETE!")
-                self._log("=" * 40)
-                self._finish(True)
-            else:
-                self._log("[X] Header still present after strip - manual cleanup needed.")
-                self._finish(False)
+            if DiscordDetector._is_injected(target):
+                self._log("[X] Payload still present after operation - manual cleanup needed.")
+                self._finish(False, show_restart=False)
+                return
+
+            _launch_and_finish(True)
+
         except PermissionError:
             self._log("[X] Permission denied. Run as Administrator.")
-            self._finish(False)
+            self._finish(False, show_restart=False)
         except Exception as ex:
             self._log("[X] FATAL: " + str(ex))
-            self._finish(False)
+            self._finish(False, show_restart=False)
 
     def _run_restart(self, inst):
         try:
@@ -3635,13 +3728,13 @@ class Api:
                 self._log("=" * 40)
                 self._log("RESTART COMPLETE!")
                 self._log("=" * 40)
-                self._finish(True)
+                self._finish(True, show_restart=False)
             else:
                 self._log("[!] Could not auto-launch. Start Discord manually.")
-                self._finish(True)
+                self._finish(True, show_restart=False)
         except Exception as ex:
             self._log("[X] FATAL: " + str(ex))
-            self._finish(False)
+            self._finish(False, show_restart=False)
 
 
 def _open_url_bg(url):
